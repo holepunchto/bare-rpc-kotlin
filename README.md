@@ -21,6 +21,7 @@ dependencies {
 Building needs:
 
 - JDK 21
+- Node.js, whose `npm` fetches the wire fixtures
 - An Android SDK with platform `android-36`, found through `ANDROID_HOME` or `sdk.dir` in `local.properties`
 
 ```sh
