@@ -34,6 +34,8 @@ kotlin {
 
 ktfmt { googleStyle() }
 
+tasks.named<Test>("jvmTest") { useJUnitPlatform() }
+
 val checkAscii =
   tasks.register("checkAscii") {
     val root = rootDir
