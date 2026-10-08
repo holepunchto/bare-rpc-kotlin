@@ -12,7 +12,7 @@ repositories {
 }
 
 dependencies {
-  implementation("com.github.holepunchto:bare-rpc-kotlin:<tag>")
+  implementation("com.github.holepunchto.bare-rpc-kotlin:bare-rpc-kotlin:<tag>")
 }
 ```
 
