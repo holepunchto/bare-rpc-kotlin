@@ -5,7 +5,12 @@ plugins {
   alias(libs.plugins.kotlin.multiplatform)
   alias(libs.plugins.android.kotlin.multiplatform.library)
   alias(libs.plugins.ktfmt)
+  id("maven-publish")
 }
+
+group = "com.github.holepunchto"
+
+version = System.getenv("VERSION") ?: "0.0.0"
 
 kotlin {
   jvmToolchain(21)
