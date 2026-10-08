@@ -45,7 +45,35 @@ dokka {
 
 ktfmt { googleStyle() }
 
-tasks.named<Test>("jvmTest") { useJUnitPlatform() }
+val fixturesVersion = "0.2.3"
+
+val fixturesDir = layout.buildDirectory.dir("hrpc-test")
+
+val packFixtures =
+  tasks.register<Exec>("packFixtures") {
+    val npm =
+      if (System.getProperty("os.name").startsWith("Windows")) listOf("cmd", "/c", "npm")
+      else listOf("npm")
+    inputs.property("version", fixturesVersion)
+    outputs.file(fixturesDir.map { it.file("hrpc-test-$fixturesVersion.tgz") })
+    workingDir(fixturesDir)
+    commandLine(npm + listOf("pack", "hrpc-test@$fixturesVersion", "--loglevel=error"))
+  }
+
+val unpackFixtures =
+  tasks.register<Sync>("unpackFixtures") {
+    from(packFixtures.map { tarTree(it.outputs.files.singleFile) })
+    into(fixturesDir.map { it.dir("unpacked") })
+  }
+
+tasks.named<Test>("jvmTest") {
+  useJUnitPlatform()
+  inputs.files(unpackFixtures)
+  val fixtures = fixturesDir.map { it.dir("unpacked/package/fixtures").asFile.path }
+  jvmArgumentProviders.add(
+    CommandLineArgumentProvider { listOf("-Dhrpc-test.fixtures=${fixtures.get()}") }
+  )
+}
 
 val checkAscii =
   tasks.register("checkAscii") {
