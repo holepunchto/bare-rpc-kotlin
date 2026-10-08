@@ -1,2 +1,4 @@
 jdk:
   - openjdk21
+install:
+  - if [ -x /usr/lib/jvm/java-21-openjdk-amd64/bin/java ]; then export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64; export PATH="$JAVA_HOME/bin:$PATH"; fi; java -version; ./gradlew publishToMavenLocal
