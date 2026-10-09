@@ -1,8 +1,14 @@
 [versions]
 android = "9.3.0"
+compact-encoding = "v0.2.0"
 dokka = "2.2.0"
 kotlin = "2.4.20"
 ktfmt = "0.27.0"
+serialization = "1.11.0"
+
+[libraries]
+compact-encoding = { module = "com.github.holepunchto.compact-encoding-kotlin:compact-encoding-kotlin", version.ref = "compact-encoding" }
+kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serialization" }
 
 [plugins]
 android-kotlin-multiplatform-library = { id = "com.android.kotlin.multiplatform.library", version.ref = "android" }

@@ -9,4 +9,10 @@ class WireFixturesTest {
     val directories = fixtures.listFiles()!!.filter { it.isDirectory }.map { it.name }.toSet()
     assertEquals(emptySet(), unsupported - directories)
   }
+
+  @Test
+  fun `every directory is supported or unsupported`() {
+    val directories = fixtures.listFiles()!!.filter { it.isDirectory }.map { it.name }.toSet()
+    assertEquals(emptySet(), directories - supported - unsupported)
+  }
 }

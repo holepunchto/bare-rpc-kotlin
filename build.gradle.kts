@@ -35,7 +35,11 @@ kotlin {
     compilerOptions { jvmTarget = JvmTarget.JVM_11 }
   }
 
-  sourceSets { commonTest.dependencies { implementation(kotlin("test")) } }
+  sourceSets {
+    commonMain.dependencies { implementation(libs.compact.encoding) }
+    commonTest.dependencies { implementation(kotlin("test")) }
+    jvmTest.dependencies { implementation(libs.kotlinx.serialization.json) }
+  }
 }
 
 dokka {
