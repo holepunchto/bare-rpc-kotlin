@@ -3,5 +3,10 @@ plugins { kotlin("multiplatform") }
 kotlin {
   js()
 
-  sourceSets { jsMain { kotlin.srcDir("../src/commonMain/kotlin") } }
+  sourceSets {
+    jsMain {
+      kotlin.srcDir("../src/commonMain/kotlin")
+      dependencies { implementation(libs.compact.encoding) }
+    }
+  }
 }
