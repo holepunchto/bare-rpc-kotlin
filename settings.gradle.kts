@@ -11,7 +11,10 @@ dependencyResolutionManagement {
   repositories {
     google()
     mavenCentral()
-    maven("https://jitpack.io")
+    exclusiveContent {
+      forRepository { maven("https://jitpack.io") }
+      filter { includeGroupByRegex("com\\.github\\.holepunchto\\..*") }
+    }
   }
 }
 
