@@ -64,14 +64,14 @@ private const val REQUEST = 1uL
 private const val RESPONSE = 2uL
 private const val STREAM = 3uL
 
-private const val DATA = 0x10uL
-private const val ERROR = 0x80uL
+private const val STREAM_DATA = 0x10uL
+private const val STREAM_ERROR = 0x80uL
 
 private val body: Codec<Message> =
   object : Codec<Message> {
-    override fun preencode(state: State, value: Message) = write(value, state, sizing = true)
+    override fun preencode(state: State, value: Message) = write(value, state, Preencode)
 
-    override fun encode(state: State, value: Message) = write(value, state, sizing = false)
+    override fun encode(state: State, value: Message) = write(value, state, Encode)
 
     override fun decode(state: State): Message {
       val type = uint.decode(state)
@@ -93,16 +93,20 @@ private val body: Codec<Message> =
         }
         STREAM -> {
           val flags = uint.decode(state)
-          if (flags and ERROR != 0uL) TODO("error struct")
-          StreamMessage(id, flags, if (flags and DATA != 0uL) buffer.decode(state) else null, null)
+          if (flags and STREAM_ERROR != 0uL) TODO("error struct")
+          StreamMessage(
+            id,
+            flags,
+            if (flags and STREAM_DATA != 0uL) buffer.decode(state) else null,
+            null,
+          )
         }
         else -> TODO("unknown type")
       }
     }
 
-    private fun write(value: Message, state: State, sizing: Boolean) {
-      fun <T> put(codec: Codec<T>, field: T) =
-        if (sizing) codec.preencode(state, field) else codec.encode(state, field)
+    private fun write(value: Message, state: State, step: Step) {
+      fun <T> put(codec: Codec<T>, field: T) = step.put(codec, state, field)
 
       when (value) {
         is RequestMessage -> {
@@ -125,8 +129,20 @@ private val body: Codec<Message> =
           put(uint, value.id)
           put(uint, value.flags)
           if (value.error != null) TODO("error struct")
-          if (value.flags and DATA != 0uL) put(buffer, value.data ?: ByteArray(0))
+          if (value.flags and STREAM_DATA != 0uL) put(buffer, value.data ?: ByteArray(0))
         }
       }
     }
   }
+
+private interface Step {
+  fun <T> put(codec: Codec<T>, state: State, value: T)
+}
+
+private object Preencode : Step {
+  override fun <T> put(codec: Codec<T>, state: State, value: T) = codec.preencode(state, value)
+}
+
+private object Encode : Step {
+  override fun <T> put(codec: Codec<T>, state: State, value: T) = codec.encode(state, value)
+}
