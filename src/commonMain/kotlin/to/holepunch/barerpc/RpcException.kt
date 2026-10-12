@@ -13,8 +13,8 @@ public class UnknownMessageException internal constructor(public val type: ULong
   RpcException("Unknown message '$type'")
 
 /**
- * A frame cannot be read: its length promises more bytes than follow, or a field runs past the end
- * of the frame.
+ * A frame cannot be read: its bytes end before its length prefix, its length or one of its fields
+ * does.
  */
 public class MalformedFrameException
 internal constructor(message: String, cause: Throwable? = null) : RpcException(message, cause)

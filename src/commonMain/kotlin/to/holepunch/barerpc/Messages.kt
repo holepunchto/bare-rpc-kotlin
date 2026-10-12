@@ -57,17 +57,24 @@ internal val frame: Codec<Message> =
       state.start = end
     }
 
-    override fun decode(state: State): Message =
+    override fun decode(state: State): Message {
+      val end = state.end
       try {
         val length = uint32.decode(state)
         if (length > state.remaining.toUInt()) {
-          throw MalformedFrameException("frame needs $length bytes, ${state.remaining} remain")
+          throw MalformedFrameException(
+            "frame length $length exceeds the ${state.remaining} bytes remaining"
+          )
         }
-        state.end = state.start + length.toInt()
-        body.decode(state)
+        val frameEnd = state.start + length.toInt()
+        state.end = frameEnd
+        return body.decode(state).also { state.start = frameEnd }
       } catch (e: DecodingException) {
         throw MalformedFrameException(e.message.orEmpty(), e)
+      } finally {
+        state.end = end
       }
+    }
   }
 
 private const val REQUEST = 1uL
