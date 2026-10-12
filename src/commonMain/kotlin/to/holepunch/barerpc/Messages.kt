@@ -58,7 +58,7 @@ internal val frame: Codec<Message> =
     }
 
     override fun decode(state: State): Message {
-      val end = state.end
+      val outerEnd = state.end
       try {
         val length = uint32.decode(state)
         if (length > state.remaining.toUInt()) {
@@ -68,11 +68,13 @@ internal val frame: Codec<Message> =
         }
         val frameEnd = state.start + length.toInt()
         state.end = frameEnd
-        return body.decode(state).also { state.start = frameEnd }
+        val message = body.decode(state)
+        state.start = frameEnd
+        return message
       } catch (e: DecodingException) {
         throw MalformedFrameException(e.message.orEmpty(), e)
       } finally {
-        state.end = end
+        state.end = outerEnd
       }
     }
   }
