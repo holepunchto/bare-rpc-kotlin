@@ -15,7 +15,11 @@ internal val fixtures = File(System.getProperty("hrpc-test.fixtures"))
 
 internal val directories = fixtures.listFiles()!!.filter { it.isDirectory }.map { it.name }.toSet()
 
-internal val supported = setOf("envelope", "error", "negative")
+internal val caseFamilies = setOf("envelope", "error")
+
+internal val rejectionFamilies = setOf("negative")
+
+internal val supported = caseFamilies + rejectionFamilies
 
 internal val unsupported = setOf("boundary", "dispatch", "dispatch-sparse", "sequence")
 
