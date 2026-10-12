@@ -6,22 +6,22 @@ import kotlin.test.assertEquals
 import to.holepunch.compactencoding.decode
 import to.holepunch.compactencoding.encode
 
-class EnvelopeTest {
+class CaseTest {
   @Test
-  fun `every envelope message encodes to its frame`() {
-    for (case in cases("envelope")) assertContentEquals(
+  fun `every case message encodes to its frame`() {
+    for (family in caseFamilies) for (case in cases(family)) assertContentEquals(
       case.frame,
       encode(frame, messageOf(case.descriptor)),
-      case.note,
+      "$family: ${case.note}",
     )
   }
 
   @Test
-  fun `every envelope frame decodes to its message`() {
-    for (case in cases("envelope")) assertEquals(
+  fun `every case frame decodes to its message`() {
+    for (family in caseFamilies) for (case in cases(family)) assertEquals(
       case.descriptor,
       descriptorOf(decode(frame, case.frame)),
-      case.note,
+      "$family: ${case.note}",
     )
   }
 }
