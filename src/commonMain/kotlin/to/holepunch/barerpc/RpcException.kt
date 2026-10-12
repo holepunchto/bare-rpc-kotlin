@@ -1,6 +1,6 @@
 package to.holepunch.barerpc
 
-/** A failure raised on this side of the connection, not reported by the peer. */
+/** A failure of an RPC exchange, raised by this side or reported by the peer. */
 public sealed class RpcException(message: String) : Exception(message)
 
 /**
@@ -9,4 +9,4 @@ public sealed class RpcException(message: String) : Exception(message)
  * @property type the type the frame names.
  */
 public class UnknownMessageException internal constructor(public val type: ULong) :
-  RpcException("Unknown message type $type")
+  RpcException("Unknown message '$type'")
