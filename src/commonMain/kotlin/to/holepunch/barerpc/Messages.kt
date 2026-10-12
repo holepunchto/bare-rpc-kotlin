@@ -101,7 +101,7 @@ private val body: Codec<Message> =
             if (error == null && flags and STREAM_DATA != 0uL) buffer.decode(state) else null
           StreamMessage(id, flags, data, error)
         }
-        else -> TODO("unknown type")
+        else -> throw UnknownMessageException(type)
       }
     }
 
