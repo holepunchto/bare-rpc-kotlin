@@ -25,7 +25,7 @@ class StreamFlagsTest {
   }
 
   @Test
-  fun `a stream error without the error flag encodes the data`() =
+  fun `a stream message with an error but only the data flag encodes the data`() =
     assertContentEquals(
       "070000000302fd10010101".hexToByteArray(),
       encode(frame, StreamMessage(2uL, 0x110uL, byteArrayOf(1), RemoteError("gone", "E", 1))),

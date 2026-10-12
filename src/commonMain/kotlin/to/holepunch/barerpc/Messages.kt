@@ -96,12 +96,10 @@ private val body: Codec<Message> =
         }
         STREAM -> {
           val flags = uint.decode(state)
-          when {
-            flags and STREAM_ERROR != 0uL ->
-              StreamMessage(id, flags, null, remoteError.decode(state))
-            flags and STREAM_DATA != 0uL -> StreamMessage(id, flags, buffer.decode(state), null)
-            else -> StreamMessage(id, flags, null, null)
-          }
+          val error = if (flags and STREAM_ERROR != 0uL) remoteError.decode(state) else null
+          val data =
+            if (error == null && flags and STREAM_DATA != 0uL) buffer.decode(state) else null
+          StreamMessage(id, flags, data, error)
         }
         else -> TODO("unknown type")
       }
