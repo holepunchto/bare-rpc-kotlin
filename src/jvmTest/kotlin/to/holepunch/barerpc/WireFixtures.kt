@@ -13,6 +13,8 @@ import kotlinx.serialization.json.long
 
 internal val fixtures = File(System.getProperty("hrpc-test.fixtures"))
 
+internal val directories = fixtures.listFiles()!!.filter { it.isDirectory }.map { it.name }.toSet()
+
 internal val supported = setOf("envelope")
 
 internal val unsupported =
@@ -23,6 +25,9 @@ internal class Case(val note: String, val descriptor: JsonObject, val frame: Byt
 internal fun cases(family: String): List<Case> {
   val messages = read(family, "messages.json").jsonArray
   val frames = read(family, "frames.json").jsonArray
+  check(messages.size == frames.size) {
+    "$family: ${messages.size} messages, ${frames.size} frames"
+  }
   return messages.zip(frames) { message, frame ->
     Case(
       message.jsonObject.getValue("note").jsonPrimitive.content,
