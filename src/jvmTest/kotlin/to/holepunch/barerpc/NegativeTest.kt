@@ -7,8 +7,8 @@ import to.holepunch.compactencoding.decode
 class NegativeTest {
   @Test
   fun `every negative frame is rejected`() {
-    for (case in rejections("negative")) assertFailsWith<RpcException>(case.reason) {
-      decode(frame, case.frame)
+    for (family in rejectionFamilies) for (case in rejections(family)) {
+      assertFailsWith<RpcException>("$family: ${case.reason}") { decode(frame, case.frame) }
     }
   }
 }

@@ -8,7 +8,7 @@ import to.holepunch.compactencoding.encode
 
 class CaseTest {
   @Test
-  fun `every case message encodes to its frame`() {
+  fun `every message encodes to its frame`() {
     for (family in caseFamilies) for (case in cases(family)) assertContentEquals(
       case.frame,
       encode(frame, messageOf(case.descriptor)),
@@ -17,7 +17,7 @@ class CaseTest {
   }
 
   @Test
-  fun `every case frame decodes to its message`() {
+  fun `every frame decodes to its message`() {
     for (family in caseFamilies) for (case in cases(family)) assertEquals(
       case.descriptor,
       descriptorOf(decode(frame, case.frame)),
