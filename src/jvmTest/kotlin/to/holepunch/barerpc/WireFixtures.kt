@@ -15,9 +15,9 @@ internal val fixtures = File(System.getProperty("hrpc-test.fixtures"))
 
 internal val directories = fixtures.listFiles()!!.filter { it.isDirectory }.map { it.name }.toSet()
 
-internal val supported = setOf("envelope", "error")
+internal val supported = setOf("envelope", "error", "negative")
 
-internal val unsupported = setOf("boundary", "dispatch", "dispatch-sparse", "negative", "sequence")
+internal val unsupported = setOf("boundary", "dispatch", "dispatch-sparse", "sequence")
 
 internal class Case(val note: String, val descriptor: JsonObject, val frame: ByteArray)
 
@@ -35,6 +35,16 @@ internal fun cases(family: String): List<Case> {
     )
   }
 }
+
+internal class Rejection(val reason: String, val frame: ByteArray)
+
+internal fun rejections(family: String): List<Rejection> =
+  read(family, "frames.json").jsonArray.map {
+    Rejection(
+      it.jsonObject.getValue("reason").jsonPrimitive.content,
+      it.jsonObject.getValue("hex").jsonPrimitive.content.hexToByteArray(),
+    )
+  }
 
 internal fun messageOf(descriptor: JsonObject): Message {
   val id = descriptor.uint("id")

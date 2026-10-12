@@ -1,5 +1,8 @@
+public final class to/holepunch/barerpc/MalformedFrameException : to/holepunch/barerpc/RpcException {
+}
+
 public abstract class to/holepunch/barerpc/RpcException : java/lang/Exception {
-	public synthetic fun <init> (Ljava/lang/String;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/Throwable;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 }
 
 public final class to/holepunch/barerpc/UnknownMessageException : to/holepunch/barerpc/RpcException {

@@ -1,6 +1,7 @@
 package to.holepunch.barerpc
 
 import to.holepunch.compactencoding.Codec
+import to.holepunch.compactencoding.DecodingException
 import to.holepunch.compactencoding.State
 import to.holepunch.compactencoding.bool
 import to.holepunch.compactencoding.buffer
@@ -56,10 +57,17 @@ internal val frame: Codec<Message> =
       state.start = end
     }
 
-    override fun decode(state: State): Message {
-      uint32.decode(state)
-      return body.decode(state)
-    }
+    override fun decode(state: State): Message =
+      try {
+        val length = uint32.decode(state)
+        if (length > state.remaining.toUInt()) {
+          throw MalformedFrameException("frame needs $length bytes, ${state.remaining} remain")
+        }
+        state.end = state.start + length.toInt()
+        body.decode(state)
+      } catch (e: DecodingException) {
+        throw MalformedFrameException(e.message.orEmpty(), e)
+      }
   }
 
 private const val REQUEST = 1uL
