@@ -43,7 +43,11 @@ internal fun messageOf(descriptor: JsonObject): Message {
   val data = descriptor.getValue("data").let { if (it is JsonNull) null else it.hex() }
   return when (descriptor.uint("type")) {
     1uL -> RequestMessage(id, descriptor.uint("command"), stream, data)
-    2uL -> ResponseMessage(id, stream, ResponseResult.Success(data))
+    2uL -> {
+      val error = descriptor.remoteError()
+      check(error == null || data == null) { "response with both error and data" }
+      ResponseMessage(id, stream, error ?: ResponseResult.Success(data))
+    }
     3uL -> StreamMessage(id, stream, data, null)
     else -> error("type ${descriptor["type"]}")
   }
@@ -67,8 +71,8 @@ internal fun descriptorOf(message: Message): JsonObject =
           "type" to JsonPrimitive(2),
           "id" to message.id.json(),
           "stream" to message.stream.json(),
-          "error" to JsonNull,
-          "data" to (message.result as ResponseResult.Success).data.json(),
+          "error" to (message.result as? RemoteError).json(),
+          "data" to (message.result as? ResponseResult.Success)?.data.json(),
         )
       )
     is StreamMessage ->
@@ -86,11 +90,31 @@ internal fun descriptorOf(message: Message): JsonObject =
 private fun read(family: String, name: String): JsonElement =
   Json.parseToJsonElement(File(fixtures, "$family/$name").readText())
 
+private fun JsonObject.remoteError(): RemoteError? =
+  (getValue("error") as? JsonObject)?.let {
+    RemoteError(
+      it.getValue("message").jsonPrimitive.content,
+      it.getValue("code").jsonPrimitive.content,
+      it.getValue("errno").jsonPrimitive.long,
+    )
+  }
+
 private fun JsonObject.uint(key: String): ULong = getValue(key).jsonPrimitive.long.toULong()
 
 private fun JsonElement.hex(): ByteArray = jsonPrimitive.content.hexToByteArray()
 
 private fun ULong.json(): JsonElement = JsonPrimitive(toLong())
+
+private fun RemoteError?.json(): JsonElement =
+  if (this == null) JsonNull
+  else
+    JsonObject(
+      mapOf(
+        "message" to JsonPrimitive(message),
+        "code" to JsonPrimitive(code),
+        "errno" to JsonPrimitive(errno),
+      )
+    )
 
 private fun ByteArray?.json(): JsonElement =
   if (this == null) JsonNull else JsonPrimitive(toHexString())

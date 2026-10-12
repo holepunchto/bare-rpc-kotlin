@@ -4,8 +4,10 @@ import to.holepunch.compactencoding.Codec
 import to.holepunch.compactencoding.State
 import to.holepunch.compactencoding.bool
 import to.holepunch.compactencoding.buffer
+import to.holepunch.compactencoding.int
 import to.holepunch.compactencoding.uint
 import to.holepunch.compactencoding.uint32
+import to.holepunch.compactencoding.utf8
 
 internal sealed interface Message {
   val id: ULong
@@ -83,12 +85,13 @@ private val body: Codec<Message> =
           RequestMessage(id, command, stream, if (stream == 0uL) buffer.decode(state) else null)
         }
         RESPONSE -> {
-          if (bool.decode(state)) TODO("error struct")
+          val hasError = bool.decode(state)
           val stream = uint.decode(state)
           ResponseMessage(
             id,
             stream,
-            ResponseResult.Success(if (stream == 0uL) buffer.decode(state) else null),
+            if (hasError) remoteError.decode(state)
+            else ResponseResult.Success(if (stream == 0uL) buffer.decode(state) else null),
           )
         }
         STREAM -> {
@@ -119,10 +122,14 @@ private val body: Codec<Message> =
         is ResponseMessage -> {
           put(uint, RESPONSE)
           put(uint, value.id)
-          val data = (value.result as? ResponseResult.Success ?: TODO("error struct")).data
-          put(bool, false)
+          val result = value.result
+          put(bool, result is RemoteError)
           put(uint, value.stream)
-          if (value.stream == 0uL) put(buffer, data ?: ByteArray(0))
+          when (result) {
+            is RemoteError -> put(remoteError, result)
+            is ResponseResult.Success ->
+              if (value.stream == 0uL) put(buffer, result.data ?: ByteArray(0))
+          }
         }
         is StreamMessage -> {
           put(uint, STREAM)
@@ -132,6 +139,28 @@ private val body: Codec<Message> =
           if (value.flags and STREAM_DATA != 0uL) put(buffer, value.data ?: ByteArray(0))
         }
       }
+    }
+  }
+
+private val remoteError: Codec<RemoteError> =
+  object : Codec<RemoteError> {
+    override fun preencode(state: State, value: RemoteError) = write(value, state, Preencode)
+
+    override fun encode(state: State, value: RemoteError) = write(value, state, Encode)
+
+    override fun decode(state: State): RemoteError {
+      val message = utf8.decode(state)
+      val code = utf8.decode(state)
+      val errno = int.decode(state)
+      return RemoteError(message, code, errno)
+    }
+
+    private fun write(value: RemoteError, state: State, step: Step) {
+      fun <T> put(codec: Codec<T>, field: T) = step.put(codec, state, field)
+
+      put(utf8, value.message)
+      put(utf8, value.code)
+      put(int, value.errno)
     }
   }
 
