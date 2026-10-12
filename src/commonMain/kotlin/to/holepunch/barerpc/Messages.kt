@@ -26,15 +26,15 @@ internal class ResponseMessage(
 
 internal sealed interface ResponseResult {
   class Success(val data: ByteArray?) : ResponseResult
-
-  class RemoteError(val message: String, val code: String, val errno: Long) : ResponseResult
 }
+
+internal class RemoteError(val message: String, val code: String, val errno: Long) : ResponseResult
 
 internal class StreamMessage(
   override val id: ULong,
   val flags: ULong,
   val data: ByteArray?,
-  val error: ResponseResult.RemoteError?,
+  val error: RemoteError?,
 ) : Message
 
 internal val frame: Codec<Message> =
