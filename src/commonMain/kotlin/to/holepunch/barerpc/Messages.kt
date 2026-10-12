@@ -148,13 +148,19 @@ private val remoteError: Codec<RemoteError> =
 
     override fun encode(state: State, value: RemoteError) = write(value, state, Encode)
 
-    override fun decode(state: State) =
-      RemoteError(utf8.decode(state), utf8.decode(state), int.decode(state))
+    override fun decode(state: State): RemoteError {
+      val message = utf8.decode(state)
+      val code = utf8.decode(state)
+      val errno = int.decode(state)
+      return RemoteError(message, code, errno)
+    }
 
     private fun write(value: RemoteError, state: State, step: Step) {
-      step.put(utf8, state, value.message)
-      step.put(utf8, state, value.code)
-      step.put(int, state, value.errno)
+      fun <T> put(codec: Codec<T>, field: T) = step.put(codec, state, field)
+
+      put(utf8, value.message)
+      put(utf8, value.code)
+      put(int, value.errno)
     }
   }
 

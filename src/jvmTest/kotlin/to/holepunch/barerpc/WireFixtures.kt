@@ -43,7 +43,11 @@ internal fun messageOf(descriptor: JsonObject): Message {
   val data = descriptor.getValue("data").let { if (it is JsonNull) null else it.hex() }
   return when (descriptor.uint("type")) {
     1uL -> RequestMessage(id, descriptor.uint("command"), stream, data)
-    2uL -> ResponseMessage(id, stream, descriptor.remoteError() ?: ResponseResult.Success(data))
+    2uL -> {
+      val error = descriptor.remoteError()
+      check(error == null || data == null) { "response with both error and data" }
+      ResponseMessage(id, stream, error ?: ResponseResult.Success(data))
+    }
     3uL -> StreamMessage(id, stream, data, null)
     else -> error("type ${descriptor["type"]}")
   }
