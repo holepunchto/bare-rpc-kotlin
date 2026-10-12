@@ -15,10 +15,9 @@ internal val fixtures = File(System.getProperty("hrpc-test.fixtures"))
 
 internal val directories = fixtures.listFiles()!!.filter { it.isDirectory }.map { it.name }.toSet()
 
-internal val supported = setOf("envelope")
+internal val supported = setOf("envelope", "error")
 
-internal val unsupported =
-  setOf("boundary", "dispatch", "dispatch-sparse", "error", "negative", "sequence")
+internal val unsupported = setOf("boundary", "dispatch", "dispatch-sparse", "negative", "sequence")
 
 internal class Case(val note: String, val descriptor: JsonObject, val frame: ByteArray)
 
@@ -48,7 +47,7 @@ internal fun messageOf(descriptor: JsonObject): Message {
       check(error == null || data == null) { "response with both error and data" }
       ResponseMessage(id, stream, error ?: ResponseResult.Success(data))
     }
-    3uL -> StreamMessage(id, stream, data, null)
+    3uL -> StreamMessage(id, stream, data, descriptor.remoteError())
     else -> error("type ${descriptor["type"]}")
   }
 }
@@ -81,7 +80,7 @@ internal fun descriptorOf(message: Message): JsonObject =
           "type" to JsonPrimitive(3),
           "id" to message.id.json(),
           "stream" to message.flags.json(),
-          "error" to JsonNull,
+          "error" to message.error.json(),
           "data" to message.data.json(),
         )
       )
