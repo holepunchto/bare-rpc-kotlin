@@ -96,13 +96,12 @@ private val body: Codec<Message> =
         }
         STREAM -> {
           val flags = uint.decode(state)
-          if (flags and STREAM_ERROR != 0uL) TODO("error struct")
-          StreamMessage(
-            id,
-            flags,
-            if (flags and STREAM_DATA != 0uL) buffer.decode(state) else null,
-            null,
-          )
+          when {
+            flags and STREAM_ERROR != 0uL ->
+              StreamMessage(id, flags, null, remoteError.decode(state))
+            flags and STREAM_DATA != 0uL -> StreamMessage(id, flags, buffer.decode(state), null)
+            else -> StreamMessage(id, flags, null, null)
+          }
         }
         else -> TODO("unknown type")
       }
@@ -135,8 +134,10 @@ private val body: Codec<Message> =
           put(uint, STREAM)
           put(uint, value.id)
           put(uint, value.flags)
-          if (value.error != null) TODO("error struct")
-          if (value.flags and STREAM_DATA != 0uL) put(buffer, value.data ?: ByteArray(0))
+          when {
+            value.flags and STREAM_ERROR != 0uL -> put(remoteError, value.error!!)
+            value.flags and STREAM_DATA != 0uL -> put(buffer, value.data ?: ByteArray(0))
+          }
         }
       }
     }
