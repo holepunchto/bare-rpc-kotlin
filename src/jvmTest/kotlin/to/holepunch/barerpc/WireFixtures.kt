@@ -52,11 +52,9 @@ internal fun rejections(family: String): List<Rejection> =
     )
   }
 
-internal class DecodeOnly(val reason: String, val descriptor: JsonObject, val frame: ByteArray)
-
-internal fun decodeOnly(family: String): List<DecodeOnly> =
+internal fun decodeOnlyCases(family: String): List<Case> =
   read(family, "frames.json").jsonArray.map {
-    DecodeOnly(
+    Case(
       it.jsonObject.getValue("reason").jsonPrimitive.content,
       it.jsonObject.getValue("descriptor").jsonObject,
       it.jsonObject.getValue("hex").jsonPrimitive.content.hexToByteArray(),

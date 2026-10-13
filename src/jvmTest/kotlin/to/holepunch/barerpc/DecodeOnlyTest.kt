@@ -7,10 +7,10 @@ import to.holepunch.compactencoding.decode
 class DecodeOnlyTest {
   @Test
   fun `every decode-only frame decodes to its message`() {
-    for (family in decodeOnlyFamilies) for (case in decodeOnly(family)) assertEquals(
+    for (family in decodeOnlyFamilies) for (case in decodeOnlyCases(family)) assertEquals(
       case.descriptor,
       descriptorOf(decode(frame, case.frame)),
-      "$family: ${case.reason}",
+      "$family: ${case.note}",
     )
   }
 }
