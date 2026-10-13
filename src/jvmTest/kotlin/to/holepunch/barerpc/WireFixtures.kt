@@ -66,7 +66,7 @@ internal fun decodeOnlyCases(family: String): List<Case> =
 
 internal class FrameSequence(val bytes: ByteArray, val count: Int)
 
-internal fun sequence(family: String): FrameSequence =
+internal fun frameSequence(family: String): FrameSequence =
   read(family, "frames.json").jsonObject.let {
     FrameSequence(
       it.getValue("concatenated").jsonPrimitive.content.hexToByteArray(),
