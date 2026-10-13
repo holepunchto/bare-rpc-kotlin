@@ -8,18 +8,19 @@ internal class FrameSplitter {
 
   fun push(bytes: ByteArray): List<ByteArray> {
     buffered += bytes
+    val state = State(buffered)
     val frames = mutableListOf<ByteArray>()
-    var start = 0
-    while (buffered.size - start >= 4) {
-      val end = start + 4 + lengthAt(start)
-      if (end > buffered.size) break
-      frames += buffered.copyOfRange(start, end.toInt())
-      start = end.toInt()
+    while (state.remaining >= 4) {
+      val mark = state.start
+      val length = uint32.decode(state)
+      if (length > state.remaining.toUInt()) {
+        state.start = mark
+        break
+      }
+      state.start += length.toInt()
+      frames += buffered.copyOfRange(mark, state.start)
     }
-    buffered = buffered.copyOfRange(start, buffered.size)
+    buffered = buffered.copyOfRange(state.start, buffered.size)
     return frames
   }
-
-  private fun lengthAt(start: Int): Long =
-    uint32.decode(State(buffered).also { it.start = start }).toLong()
 }

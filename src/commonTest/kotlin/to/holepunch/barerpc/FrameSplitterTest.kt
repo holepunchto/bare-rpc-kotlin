@@ -30,7 +30,22 @@ class FrameSplitterTest {
   fun `a chunk ending mid-frame keeps the rest for the next push`() {
     val splitter = FrameSplitter()
     val bytes = first + second
-    assertEquals(listOf(first.toList()), splitter.frames(bytes.copyOfRange(0, 12)))
-    assertEquals(listOf(second.toList()), splitter.frames(bytes.copyOfRange(12, bytes.size)))
+    assertEquals(listOf(first.toList()), splitter.frames(bytes.copyOfRange(0, 15)))
+    assertEquals(listOf(second.toList()), splitter.frames(bytes.copyOfRange(15, bytes.size)))
+  }
+
+  @Test
+  fun `a frame pushed in three parts comes out once it is whole`() {
+    val splitter = FrameSplitter()
+    assertEquals(emptyList(), splitter.frames(first.copyOfRange(0, 2)))
+    assertEquals(emptyList(), splitter.frames(first.copyOfRange(2, 6)))
+    assertEquals(listOf(first.toList()), splitter.frames(first.copyOfRange(6, first.size)))
+  }
+
+  @Test
+  fun `a frame longer than what has arrived waits for the rest`() {
+    val splitter = FrameSplitter()
+    assertEquals(emptyList(), splitter.frames("ffffffff01".hexToByteArray()))
+    assertEquals(emptyList(), splitter.frames(ByteArray(1024)))
   }
 }
