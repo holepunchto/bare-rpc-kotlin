@@ -21,7 +21,7 @@ internal val rejectionFamilies = setOf("negative")
 
 internal val supported = caseFamilies + rejectionFamilies
 
-internal val unsupported = setOf("dispatch", "dispatch-sparse", "sequence")
+internal val unsupported = setOf("decode-only", "dispatch", "dispatch-sparse", "sequence")
 
 internal class Case(val note: String, val descriptor: JsonObject, val frame: ByteArray)
 
