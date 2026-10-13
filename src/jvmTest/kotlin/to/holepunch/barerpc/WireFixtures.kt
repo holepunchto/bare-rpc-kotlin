@@ -6,6 +6,7 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -21,9 +22,11 @@ internal val rejectionFamilies = setOf("negative")
 
 internal val decodeOnlyFamilies = setOf("decode-only")
 
-internal val supported = caseFamilies + rejectionFamilies + decodeOnlyFamilies
+internal val sequenceFamilies = setOf("sequence")
 
-internal val unsupported = setOf("dispatch", "dispatch-sparse", "sequence")
+internal val supported = caseFamilies + rejectionFamilies + decodeOnlyFamilies + sequenceFamilies
+
+internal val unsupported = setOf("dispatch", "dispatch-sparse")
 
 internal class Case(val note: String, val descriptor: JsonObject, val frame: ByteArray)
 
@@ -58,6 +61,16 @@ internal fun decodeOnlyCases(family: String): List<Case> =
       it.jsonObject.getValue("reason").jsonPrimitive.content,
       it.jsonObject.getValue("descriptor").jsonObject,
       it.jsonObject.getValue("hex").jsonPrimitive.content.hexToByteArray(),
+    )
+  }
+
+internal class FrameSequence(val bytes: ByteArray, val count: Int)
+
+internal fun frameSequence(family: String): FrameSequence =
+  read(family, "frames.json").jsonObject.let {
+    FrameSequence(
+      it.getValue("concatenated").jsonPrimitive.content.hexToByteArray(),
+      it.getValue("count").jsonPrimitive.int,
     )
   }
 
