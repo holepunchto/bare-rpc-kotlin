@@ -19,9 +19,11 @@ internal val caseFamilies = setOf("boundary", "envelope", "error")
 
 internal val rejectionFamilies = setOf("negative")
 
-internal val supported = caseFamilies + rejectionFamilies
+internal val decodeOnlyFamilies = setOf("decode-only")
 
-internal val unsupported = setOf("decode-only", "dispatch", "dispatch-sparse", "sequence")
+internal val supported = caseFamilies + rejectionFamilies + decodeOnlyFamilies
+
+internal val unsupported = setOf("dispatch", "dispatch-sparse", "sequence")
 
 internal class Case(val note: String, val descriptor: JsonObject, val frame: ByteArray)
 
@@ -46,6 +48,17 @@ internal fun rejections(family: String): List<Rejection> =
   read(family, "frames.json").jsonArray.map {
     Rejection(
       it.jsonObject.getValue("reason").jsonPrimitive.content,
+      it.jsonObject.getValue("hex").jsonPrimitive.content.hexToByteArray(),
+    )
+  }
+
+internal class DecodeOnly(val reason: String, val descriptor: JsonObject, val frame: ByteArray)
+
+internal fun decodeOnly(family: String): List<DecodeOnly> =
+  read(family, "frames.json").jsonArray.map {
+    DecodeOnly(
+      it.jsonObject.getValue("reason").jsonPrimitive.content,
+      it.jsonObject.getValue("descriptor").jsonObject,
       it.jsonObject.getValue("hex").jsonPrimitive.content.hexToByteArray(),
     )
   }
