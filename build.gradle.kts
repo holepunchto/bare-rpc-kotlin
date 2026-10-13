@@ -49,7 +49,7 @@ dokka {
 
 ktfmt { googleStyle() }
 
-val fixturesVersion = "0.2.3"
+val fixturesVersion = "0.2.4"
 
 val fixturesDir = layout.buildDirectory.dir("hrpc-test")
 
