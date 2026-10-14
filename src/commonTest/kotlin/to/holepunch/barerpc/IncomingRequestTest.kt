@@ -2,6 +2,8 @@ package to.holepunch.barerpc
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertSame
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelChildren
@@ -105,5 +107,18 @@ class IncomingRequestTest {
     delay(1)
     assertEquals(listOf("blocked", ok), sent)
     coroutineContext.cancelChildren()
+  }
+
+  @Test
+  fun `a failing send closes the connection`() = runTest {
+    val failure = IllegalStateException("transport down")
+    val rpc = BareRpc(send = { throw failure })
+    assertSame(failure, assertFailsWith<IllegalStateException> { rpc.event(7u, ByteArray(0)) })
+    assertSame(
+      failure,
+      assertFailsWith<IllegalStateException> {
+        rpc.receive("0700000001000700026869".hexToByteArray())
+      },
+    )
   }
 }
