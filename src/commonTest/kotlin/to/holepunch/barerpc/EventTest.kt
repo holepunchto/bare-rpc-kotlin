@@ -1,11 +1,14 @@
 package to.holepunch.barerpc
 
-import kotlin.coroutines.cancellation.CancellationException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertSame
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.yield
 
 class EventTest {
   private val hi = "07000000" + "01000700026869" // event, command 7, data "hi"
@@ -93,21 +96,23 @@ class EventTest {
   }
 
   @Test
-  fun `a cancelled event handler leaves the connection open`() = runTest {
+  fun `a cancelled receive leaves the connection open`() = runTest {
     val events = mutableListOf<ULong>()
-    var cancel = true
+    var block = true
     val rpc =
       BareRpc(
         send = {},
         onEvent = {
-          if (cancel) {
-            cancel = false
-            throw CancellationException("read loop cancelled")
+          if (block) {
+            block = false
+            awaitCancellation()
           }
           events += it.command
         },
       )
-    assertFailsWith<CancellationException> { rpc.receive(hi.hexToByteArray()) }
+    val reading = launch { rpc.receive(hi.hexToByteArray()) }
+    yield()
+    reading.cancelAndJoin()
     rpc.receive(hi.hexToByteArray())
     assertEquals(listOf(7uL), events)
   }
