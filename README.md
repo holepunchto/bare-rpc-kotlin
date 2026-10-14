@@ -21,7 +21,7 @@ dependencies {
 Building needs:
 
 - JDK 21
-- Node.js, whose `npm` fetches the wire fixtures
+- Node.js, whose `npm` fetches the wire fixtures and whose `node` runs the JS bare-rpc peer
 - An Android SDK with platform `android-36`, found through `ANDROID_HOME` or `sdk.dir` in `local.properties`
 
 ```sh

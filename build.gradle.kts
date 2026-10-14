@@ -57,13 +57,14 @@ ktfmt { googleStyle() }
 
 val fixturesVersion = "0.2.4"
 
+val npm =
+  if (System.getProperty("os.name").startsWith("Windows")) listOf("cmd", "/c", "npm")
+  else listOf("npm")
+
 val fixturesDir = layout.buildDirectory.dir("hrpc-test")
 
 val packFixtures =
   tasks.register<Exec>("packFixtures") {
-    val npm =
-      if (System.getProperty("os.name").startsWith("Windows")) listOf("cmd", "/c", "npm")
-      else listOf("npm")
     inputs.property("version", fixturesVersion)
     outputs.file(fixturesDir.map { it.file("hrpc-test-$fixturesVersion.tgz") })
     workingDir(fixturesDir)
@@ -76,9 +77,32 @@ val unpackFixtures =
     into(fixturesDir.map { it.dir("unpacked") })
   }
 
+val peerDir = layout.buildDirectory.dir("peer")
+
+val copyPeer =
+  tasks.register<Sync>("copyPeer") {
+    from("src/jvmTest/js")
+    into(peerDir)
+    preserve { include("node_modules/**") }
+  }
+
+val installPeer =
+  tasks.register<Exec>("installPeer") {
+    dependsOn(copyPeer)
+    inputs.file("src/jvmTest/js/package.json")
+    outputs.dir(peerDir.map { it.dir("node_modules") })
+    workingDir(peerDir)
+    commandLine(npm + listOf("install", "--no-package-lock", "--loglevel=error"))
+  }
+
 tasks.named<Test>("jvmTest") {
   useJUnitPlatform()
   inputs.files(unpackFixtures)
+  inputs.files(copyPeer, installPeer)
+  val peerScript = peerDir.map { it.file("peer.js").asFile.path }
+  jvmArgumentProviders.add(
+    CommandLineArgumentProvider { listOf("-Dbare-rpc.peer=${peerScript.get()}") }
+  )
   val fixtures = fixturesDir.map { it.dir("unpacked/package/fixtures").asFile.path }
   jvmArgumentProviders.add(
     CommandLineArgumentProvider { listOf("-Dhrpc-test.fixtures=${fixtures.get()}") }
