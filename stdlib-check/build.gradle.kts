@@ -6,7 +6,10 @@ kotlin {
   sourceSets {
     jsMain {
       kotlin.srcDir("../src/commonMain/kotlin")
-      dependencies { implementation(libs.compact.encoding) }
+      dependencies {
+        implementation(libs.compact.encoding)
+        implementation(libs.kotlinx.coroutines.core)
+      }
     }
   }
 }

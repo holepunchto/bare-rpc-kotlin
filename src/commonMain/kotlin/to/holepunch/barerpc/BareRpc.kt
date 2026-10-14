@@ -1,6 +1,5 @@
 package to.holepunch.barerpc
 
-import kotlin.concurrent.Volatile
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.NonCancellable
@@ -27,7 +26,7 @@ public class BareRpc(
   private val state = Mutex()
   private var lastId = 0uL
   private val pending = mutableMapOf<ULong, CompletableDeferred<ByteArray>>()
-  @Volatile private var failure: Throwable? = null
+  private var failure: Throwable? = null
 
   /**
    * Sends [data] to the peer as an event for [command], which gets no reply.
@@ -36,7 +35,7 @@ public class BareRpc(
    */
   public suspend fun event(command: ULong, data: ByteArray) {
     sending.withLock {
-      failure?.let { throw it }
+      state.withLock { failure }?.let { throw it }
       send(encode(frame, RequestMessage(0u, command, 0u, data)))
     }
   }
@@ -75,7 +74,7 @@ public class BareRpc(
    *   same exception.
    */
   public suspend fun receive(bytes: ByteArray) {
-    failure?.let { throw it }
+    state.withLock { failure }?.let { throw it }
     try {
       for (frameBytes in splitter.push(bytes)) dispatch(decode(frame, frameBytes))
       splitter.push(ByteArray(0))
