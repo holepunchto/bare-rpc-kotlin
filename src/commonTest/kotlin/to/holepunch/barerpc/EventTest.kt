@@ -1,5 +1,6 @@
 package to.holepunch.barerpc
 
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -53,5 +54,61 @@ class EventTest {
     assertFailsWith<MalformedFrameException> {
       BareRpc(send = {}, maxFrameSize = 8u).receive("05000000".hexToByteArray())
     }
+  }
+
+  @Test
+  fun `a throwing event handler fails this receive and every later one`() = runTest {
+    val rpc = BareRpc(send = {}, onEvent = { error("handler failed") })
+    val failure = assertFailsWith<IllegalStateException> { rpc.receive(hi.hexToByteArray()) }
+    assertSame(
+      failure,
+      assertFailsWith<IllegalStateException> { rpc.receive(hi.hexToByteArray()) },
+    )
+  }
+
+  @Test
+  fun `a frame over the cap after a whole one fails the same receive`() = runTest {
+    val events = mutableListOf<ULong>()
+    val rpc = BareRpc(send = {}, onEvent = { events += it.command })
+    assertFailsWith<MalformedFrameException> { rpc.receive((hi + "ffffffff").hexToByteArray()) }
+    assertEquals(listOf(7uL), events)
+  }
+
+  @Test
+  fun `an event after a failure throws the same exception and sends nothing`() = runTest {
+    val sent = mutableListOf<ByteArray>()
+    val rpc = BareRpc(send = { sent += it })
+    val failure =
+      assertFailsWith<MalformedFrameException> { rpc.receive("020000000100".hexToByteArray()) }
+    assertSame(failure, assertFailsWith<MalformedFrameException> { rpc.event(7u, ByteArray(0)) })
+    assertEquals(emptyList(), sent)
+  }
+
+  @Test
+  fun `an event that opens a stream is malformed`() = runTest {
+    val events = mutableListOf<ULong>()
+    val rpc = BareRpc(send = {}, onEvent = { events += it.command })
+    assertFailsWith<MalformedFrameException> { rpc.receive("0400000001000701".hexToByteArray()) }
+    assertEquals(emptyList(), events)
+  }
+
+  @Test
+  fun `a cancelled event handler leaves the connection open`() = runTest {
+    val events = mutableListOf<ULong>()
+    var cancel = true
+    val rpc =
+      BareRpc(
+        send = {},
+        onEvent = {
+          if (cancel) {
+            cancel = false
+            throw CancellationException("read loop cancelled")
+          }
+          events += it.command
+        },
+      )
+    assertFailsWith<CancellationException> { rpc.receive(hi.hexToByteArray()) }
+    rpc.receive(hi.hexToByteArray())
+    assertEquals(listOf(7uL), events)
   }
 }
