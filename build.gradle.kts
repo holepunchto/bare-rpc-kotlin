@@ -37,7 +37,10 @@ kotlin {
 
   sourceSets {
     commonMain.dependencies { implementation(libs.compact.encoding) }
-    commonTest.dependencies { implementation(kotlin("test")) }
+    commonTest.dependencies {
+      implementation(kotlin("test"))
+      implementation(libs.kotlinx.coroutines.test)
+    }
     jvmTest.dependencies { implementation(libs.kotlinx.serialization.json) }
   }
 }
