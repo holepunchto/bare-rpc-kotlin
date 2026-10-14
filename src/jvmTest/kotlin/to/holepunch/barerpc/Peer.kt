@@ -11,7 +11,11 @@ import kotlinx.coroutines.withTimeout
 
 private val peerScript = System.getProperty("bare-rpc.peer")
 
-internal fun withPeer(block: suspend (BareRpc) -> Unit): Unit = runBlocking {
+internal fun withPeer(
+  onRequest: suspend (IncomingRequest) -> ByteArray = { throw unknownCommand(it.command) },
+  onEvent: suspend (IncomingEvent) -> Unit = {},
+  block: suspend (BareRpc) -> Unit,
+): Unit = runBlocking {
   val process =
     ProcessBuilder("node", peerScript).redirectError(ProcessBuilder.Redirect.INHERIT).start()
   val input = process.outputStream
@@ -23,7 +27,9 @@ internal fun withPeer(block: suspend (BareRpc) -> Unit): Unit = runBlocking {
           input.write(bytes)
           input.flush()
         }
-      }
+      },
+      onEvent = onEvent,
+      onRequest = onRequest,
     )
   launch(Dispatchers.IO) {
     val buffer = ByteArray(64 * 1024)
