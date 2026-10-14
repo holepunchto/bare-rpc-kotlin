@@ -16,7 +16,11 @@ internal val fixtures = File(System.getProperty("hrpc-test.fixtures"))
 
 internal val directories = fixtures.listFiles()!!.filter { it.isDirectory }.map { it.name }.toSet()
 
-internal val caseFamilies = setOf("boundary", "envelope", "error")
+internal val caseFamilies =
+  Json.parseToJsonElement(File(fixtures, "families.json").readText())
+    .jsonArray
+    .map { it.jsonPrimitive.content }
+    .toSet()
 
 internal val rejectionFamilies = setOf("negative")
 
@@ -25,8 +29,6 @@ internal val decodeOnlyFamilies = setOf("decode-only")
 internal val sequenceFamilies = setOf("sequence")
 
 internal val supported = caseFamilies + rejectionFamilies + decodeOnlyFamilies + sequenceFamilies
-
-internal val unsupported = setOf("dispatch", "dispatch-sparse")
 
 internal class Case(val note: String, val descriptor: JsonObject, val frame: ByteArray)
 
