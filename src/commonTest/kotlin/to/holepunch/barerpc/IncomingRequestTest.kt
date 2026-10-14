@@ -2,7 +2,14 @@ package to.holepunch.barerpc
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelChildren
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.yield
 
 class IncomingRequestTest {
   private val hi = "0700000001050700026869" // request id 5, command 7, "hi"
@@ -51,5 +58,52 @@ class IncomingRequestTest {
     rpc.receive(hi.hexToByteArray())
     rpc.receive(hi.hexToByteArray())
     assertEquals(listOf(secret, secret), sent)
+  }
+
+  @Test
+  fun `a remote exception from the handler goes back as that error`() = runTest {
+    val sent = mutableListOf<String>()
+    val rpc =
+      BareRpc(
+        send = { sent += it.toHexString() },
+        onRequest = { throw RemoteException("boom", "E_BOOM", 1) },
+      )
+    rpc.receive(hi.hexToByteArray())
+    assertEquals(listOf(boom), sent)
+  }
+
+  @Test
+  fun `a handler that times out goes back as an error`() = runTest {
+    val sent = mutableListOf<String>()
+    val rpc =
+      BareRpc(
+        send = { sent += it.toHexString() },
+        onRequest = { withTimeout(1) { awaitCancellation() } },
+      )
+    rpc.receive(hi.hexToByteArray())
+    assertEquals(1, sent.size)
+  }
+
+  @Test
+  fun `a reply does not wait behind a blocked send`() = runTest {
+    val sent = mutableListOf<String>()
+    val gate = CompletableDeferred<Unit>()
+    val rpc =
+      BareRpc(
+        send = {
+          if (sent.isEmpty()) {
+            sent += "blocked"
+            gate.await()
+          } else sent += it.toHexString()
+        },
+        onRequest = { "ok".encodeToByteArray() },
+      )
+    launch { rpc.request(7u, ByteArray(0)) }
+    yield()
+    rpc.receive(hi.hexToByteArray())
+    gate.complete(Unit)
+    delay(1)
+    assertEquals(listOf("blocked", ok), sent)
+    coroutineContext.cancelChildren()
   }
 }
