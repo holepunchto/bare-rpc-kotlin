@@ -36,7 +36,10 @@ kotlin {
   }
 
   sourceSets {
-    commonMain.dependencies { implementation(libs.compact.encoding) }
+    commonMain.dependencies {
+      implementation(libs.compact.encoding)
+      implementation(libs.kotlinx.coroutines.core)
+    }
     commonTest.dependencies {
       implementation(kotlin("test"))
       implementation(libs.kotlinx.coroutines.test)
