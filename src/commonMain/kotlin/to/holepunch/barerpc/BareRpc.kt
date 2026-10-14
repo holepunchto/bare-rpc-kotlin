@@ -26,7 +26,7 @@ public class BareRpc(
   private val send: suspend (ByteArray) -> Unit,
   private val onEvent: suspend (IncomingEvent) -> Unit = {},
   private val onRequest: suspend (IncomingRequest) -> ByteArray = {
-    throw RemoteException("Unknown command ${it.command}", "ERR_UNKNOWN_COMMAND", 0)
+    throw unknownCommand(it.command)
   },
   maxFrameSize: UInt = DEFAULT_MAX_FRAME_SIZE,
 ) {

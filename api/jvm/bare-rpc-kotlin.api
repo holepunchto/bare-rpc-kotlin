@@ -6,6 +6,14 @@ public final class to/holepunch/barerpc/BareRpc {
 	public final fun request-E0BElUM (J[BLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
 
+public final class to/holepunch/barerpc/CommandRouter {
+	public fun <init> ()V
+	public final fun dispatch (Lto/holepunch/barerpc/IncomingEvent;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun dispatch (Lto/holepunch/barerpc/IncomingRequest;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun onEvent-4PLdz1A (JLkotlin/jvm/functions/Function2;)V
+	public final fun onRequest-4PLdz1A (JLkotlin/jvm/functions/Function2;)V
+}
+
 public final class to/holepunch/barerpc/IncomingEvent {
 	public final fun getCommand-s-VKNKU ()J
 	public final fun getData ()[B
