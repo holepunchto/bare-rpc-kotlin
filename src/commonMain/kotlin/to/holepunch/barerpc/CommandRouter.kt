@@ -2,7 +2,8 @@ package to.holepunch.barerpc
 
 /**
  * Sends each request and event to the handler registered for its command. Pass [dispatch] to
- * [BareRpc] as its `onRequest` and `onEvent`.
+ * [BareRpc] as its `onRequest` and `onEvent`, and register every handler before the first
+ * [BareRpc.receive].
  */
 public class CommandRouter {
   private val requestHandlers = mutableMapOf<ULong, suspend (IncomingRequest) -> ByteArray>()
