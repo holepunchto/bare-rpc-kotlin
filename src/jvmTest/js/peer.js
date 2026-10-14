@@ -21,6 +21,7 @@ const rpc = new RPC(stream, async (request) => {
       return request.reply(await call.reply())
     }
     case 3:
+      if (request.reply) throw new Error('Command 3 is an event')
       return rpc.event(3).send(request.data)
     default:
       throw new Error(`Unknown command ${request.command}`)

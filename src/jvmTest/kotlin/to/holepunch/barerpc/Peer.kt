@@ -12,7 +12,7 @@ import kotlinx.coroutines.withTimeout
 private val peerScript = System.getProperty("bare-rpc.peer")
 
 internal fun withPeer(
-  onRequest: suspend (IncomingRequest) -> ByteArray = { throw unknownCommand(it.command) },
+  onRequest: (suspend (IncomingRequest) -> ByteArray)? = null,
   onEvent: suspend (IncomingEvent) -> Unit = {},
   block: suspend (BareRpc) -> Unit,
 ): Unit = runBlocking {
@@ -20,17 +20,13 @@ internal fun withPeer(
     ProcessBuilder("node", peerScript).redirectError(ProcessBuilder.Redirect.INHERIT).start()
   val input = process.outputStream
   val closing = AtomicBoolean(false)
-  val rpc =
-    BareRpc(
-      send = { bytes ->
-        withContext(Dispatchers.IO) {
-          input.write(bytes)
-          input.flush()
-        }
-      },
-      onEvent = onEvent,
-      onRequest = onRequest,
-    )
+  val send: suspend (ByteArray) -> Unit = { bytes ->
+    withContext(Dispatchers.IO) {
+      input.write(bytes)
+      input.flush()
+    }
+  }
+  val rpc = if (onRequest == null) BareRpc(send, onEvent) else BareRpc(send, onEvent, onRequest)
   launch(Dispatchers.IO) {
     val buffer = ByteArray(64 * 1024)
     while (true) {
