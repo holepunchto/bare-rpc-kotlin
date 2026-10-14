@@ -3,7 +3,9 @@ package to.holepunch.barerpc
 import to.holepunch.compactencoding.State
 import to.holepunch.compactencoding.uint32
 
-internal class FrameSplitter(private val maxFrameSize: UInt = 16u * 1024u * 1024u) {
+internal val DEFAULT_MAX_FRAME_SIZE: UInt = 16u * 1024u * 1024u
+
+internal class FrameSplitter(private val maxFrameSize: UInt = DEFAULT_MAX_FRAME_SIZE) {
   private var buffered = ByteArray(0)
 
   fun push(bytes: ByteArray): List<ByteArray> {
