@@ -1,13 +1,18 @@
 package to.holepunch.barerpc
 
 import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import to.holepunch.compactencoding.decode
 import to.holepunch.compactencoding.encode
 
 /**
  * One end of a bare-rpc connection.
  *
- * @param send writes one encoded frame to the peer.
+ * @param send writes one encoded frame to the peer, whole or not at all.
  * @param onEvent receives each event the peer sends.
  * @param maxFrameSize the longest frame [receive] accepts, length prefix included.
  */
@@ -17,6 +22,10 @@ public class BareRpc(
   maxFrameSize: UInt = DEFAULT_MAX_FRAME_SIZE,
 ) {
   private val splitter = FrameSplitter(maxFrameSize)
+  private val sending = Mutex()
+  private val state = Mutex()
+  private var lastId = 0uL
+  private val pending = mutableMapOf<ULong, CompletableDeferred<ByteArray>>()
   private var failure: Throwable? = null
 
   /**
@@ -25,8 +34,35 @@ public class BareRpc(
    * @throws Throwable the failure that closed the connection, once [receive] has failed.
    */
   public suspend fun event(command: ULong, data: ByteArray) {
-    failure?.let { throw it }
-    send(encode(frame, RequestMessage(0u, command, 0u, data)))
+    sending.withLock {
+      state.withLock { failure }?.let { throw it }
+      send(encode(frame, RequestMessage(0u, command, 0u, data)))
+    }
+  }
+
+  /**
+   * Sends [data] to the peer as a request for [command] and returns the reply.
+   *
+   * @throws RemoteException if the peer replies with an error.
+   * @throws Throwable the failure that closed the connection, if [receive] fails first, or the
+   *   failure of [send], which fails only this request.
+   */
+  public suspend fun request(command: ULong, data: ByteArray): ByteArray {
+    val reply = CompletableDeferred<ByteArray>()
+    var id = 0uL
+    try {
+      sending.withLock {
+        state.withLock {
+          failure?.let { throw it }
+          id = ++lastId
+          pending[id] = reply
+        }
+        send(encode(frame, RequestMessage(id, command, 0u, data)))
+      }
+      return reply.await()
+    } finally {
+      withContext(NonCancellable) { state.withLock { pending.remove(id) } }
+    }
   }
 
   /**
@@ -34,25 +70,44 @@ public class BareRpc(
    * must not overlap, and must not come from [onEvent].
    *
    * @throws RpcException if a frame cannot be read. Any failure but cancellation, including one
-   *   thrown by [onEvent], closes the connection, and every later call throws the same exception.
+   *   thrown by [onEvent], closes the connection: pending requests and every later call throw the
+   *   same exception.
    */
   public suspend fun receive(bytes: ByteArray) {
-    failure?.let { throw it }
+    state.withLock { failure }?.let { throw it }
     try {
       for (frameBytes in splitter.push(bytes)) dispatch(decode(frame, frameBytes))
       splitter.push(ByteArray(0))
     } catch (e: CancellationException) {
       throw e
     } catch (e: Throwable) {
-      failure = e
+      val waiting = state.withLock {
+        failure = e
+        pending.values.toList().also { pending.clear() }
+      }
+      waiting.forEach { it.completeExceptionally(e) }
       throw e
     }
   }
 
   private suspend fun dispatch(message: Message) {
-    if (message is RequestMessage && message.id == 0uL) {
-      if (message.stream != 0uL) throw MalformedFrameException("an event cannot open a stream")
-      onEvent(IncomingEvent(message.command, message.data!!))
+    when (message) {
+      is RequestMessage -> {
+        if (message.id != 0uL) TODO("incoming requests")
+        if (message.stream != 0uL) throw MalformedFrameException("an event cannot open a stream")
+        onEvent(IncomingEvent(message.command, message.data!!))
+      }
+      is ResponseMessage -> {
+        val result = message.result
+        if (result is ResponseResult.Success && message.stream != 0uL) TODO("response streams")
+        val reply = state.withLock { pending.remove(message.id) } ?: return
+        when (result) {
+          is RemoteError ->
+            reply.completeExceptionally(RemoteException(result.message, result.code, result.errno))
+          is ResponseResult.Success -> reply.complete(result.data!!)
+        }
+      }
+      is StreamMessage -> TODO("streams")
     }
   }
 }

@@ -18,3 +18,13 @@ public class UnknownMessageException internal constructor(public val type: ULong
  */
 public class MalformedFrameException
 internal constructor(message: String, cause: Throwable? = null) : RpcException(message, cause)
+
+/**
+ * The peer replied to a request with an error.
+ *
+ * @property code the error's code, such as `ERR_UNKNOWN_COMMAND`.
+ * @property errno the error's number.
+ */
+public class RemoteException
+internal constructor(message: String, public val code: String, public val errno: Long) :
+  RpcException(message)
