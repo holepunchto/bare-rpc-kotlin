@@ -14,11 +14,17 @@ import to.holepunch.compactencoding.encode
  *
  * @param send writes one encoded frame to the peer, whole or not at all.
  * @param onEvent receives each event the peer sends.
+ * @param onRequest answers each request the peer sends: its return value is the reply, and an
+ *   exception it throws goes back as an error, a [RemoteException] as itself. By default every
+ *   request is rejected as an unknown command.
  * @param maxFrameSize the longest frame [receive] accepts, length prefix included.
  */
 public class BareRpc(
   private val send: suspend (ByteArray) -> Unit,
   private val onEvent: suspend (IncomingEvent) -> Unit = {},
+  private val onRequest: suspend (IncomingRequest) -> ByteArray = {
+    throw RemoteException("Unknown command ${it.command}", "ERR_UNKNOWN_COMMAND", 0)
+  },
   maxFrameSize: UInt = DEFAULT_MAX_FRAME_SIZE,
 ) {
   private val splitter = FrameSplitter(maxFrameSize)
@@ -93,7 +99,7 @@ public class BareRpc(
   private suspend fun dispatch(message: Message) {
     when (message) {
       is RequestMessage -> {
-        if (message.id != 0uL) TODO("incoming requests")
+        if (message.id != 0uL) return answer(message)
         if (message.stream != 0uL) throw MalformedFrameException("an event cannot open a stream")
         onEvent(IncomingEvent(message.command, message.data!!))
       }
@@ -110,7 +116,31 @@ public class BareRpc(
       is StreamMessage -> TODO("streams")
     }
   }
+
+  private suspend fun answer(request: RequestMessage) {
+    if (request.stream != 0uL) TODO("request streams")
+    val result =
+      try {
+        ResponseResult.Success(onRequest(IncomingRequest(request.command, request.data!!)))
+      } catch (e: CancellationException) {
+        throw e
+      } catch (e: RemoteException) {
+        RemoteError(e.message.orEmpty(), e.code, e.errno)
+      } catch (e: Throwable) {
+        RemoteError(e.message.orEmpty(), "", 0)
+      }
+    sending.withLock { send(encode(frame, ResponseMessage(request.id, 0u, result))) }
+  }
 }
+
+/**
+ * A request received from the peer.
+ *
+ * @property command the command the request names.
+ * @property data the request's payload.
+ */
+public class IncomingRequest
+internal constructor(public val command: ULong, public val data: ByteArray)
 
 /**
  * An event received from the peer.
