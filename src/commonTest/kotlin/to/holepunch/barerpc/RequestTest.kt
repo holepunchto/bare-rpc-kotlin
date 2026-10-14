@@ -4,8 +4,10 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertSame
+import kotlin.test.assertTrue
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelChildren
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.test.runTest
@@ -59,7 +61,7 @@ class RequestTest {
       val failure =
         assertFailsWith<MalformedFrameException> { rpc.receive("020000000100".hexToByteArray()) }
       val error = assertFailsWith<MalformedFrameException> { reply.await() }
-      assertSame(failure, error.cause ?: error)
+      assertTrue(error === failure || error.cause === failure)
     }
   }
 
@@ -76,5 +78,23 @@ class RequestTest {
   @Test
   fun `a response with nothing pending is ignored`() = runTest {
     BareRpc(send = {}).receive(ok.hexToByteArray())
+  }
+
+  @Test
+  fun `concurrent requests send whole frames one at a time`() = runTest {
+    val log = mutableListOf<String>()
+    val rpc =
+      BareRpc(
+        send = {
+          log += "start"
+          yield()
+          log += "end"
+        }
+      )
+    launch { rpc.request(7u, ByteArray(0)) }
+    launch { rpc.request(7u, ByteArray(0)) }
+    delay(1)
+    assertEquals(listOf("start", "end", "start", "end"), log)
+    coroutineContext.cancelChildren()
   }
 }

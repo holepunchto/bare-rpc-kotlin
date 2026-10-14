@@ -13,7 +13,7 @@ import to.holepunch.compactencoding.encode
 /**
  * One end of a bare-rpc connection.
  *
- * @param send writes one encoded frame to the peer.
+ * @param send writes one encoded frame to the peer, whole or not at all.
  * @param onEvent receives each event the peer sends.
  * @param maxFrameSize the longest frame [receive] accepts, length prefix included.
  */
@@ -35,24 +35,31 @@ public class BareRpc(
    * @throws Throwable the failure that closed the connection, once [receive] has failed.
    */
   public suspend fun event(command: ULong, data: ByteArray) {
-    failure?.let { throw it }
-    sendFrame(RequestMessage(0u, command, 0u, data))
+    sending.withLock {
+      failure?.let { throw it }
+      send(encode(frame, RequestMessage(0u, command, 0u, data)))
+    }
   }
 
   /**
    * Sends [data] to the peer as a request for [command] and returns the reply.
    *
    * @throws RemoteException if the peer replies with an error.
-   * @throws Throwable the failure that closed the connection, if [receive] fails first.
+   * @throws Throwable the failure that closed the connection, if [receive] fails first, or the
+   *   failure of [send], which fails only this request.
    */
   public suspend fun request(command: ULong, data: ByteArray): ByteArray {
     val reply = CompletableDeferred<ByteArray>()
-    val id = state.withLock {
-      failure?.let { throw it }
-      (++lastId).also { pending[it] = reply }
-    }
+    var id = 0uL
     try {
-      sendFrame(RequestMessage(id, command, 0u, data))
+      sending.withLock {
+        state.withLock {
+          failure?.let { throw it }
+          id = ++lastId
+          pending[id] = reply
+        }
+        send(encode(frame, RequestMessage(id, command, 0u, data)))
+      }
       return reply.await()
     } finally {
       withContext(NonCancellable) { state.withLock { pending.remove(id) } }
@@ -84,26 +91,24 @@ public class BareRpc(
     }
   }
 
-  private suspend fun sendFrame(message: Message) {
-    sending.withLock { send(encode(frame, message)) }
-  }
-
   private suspend fun dispatch(message: Message) {
     when (message) {
-      is RequestMessage ->
-        if (message.id == 0uL) {
-          if (message.stream != 0uL) throw MalformedFrameException("an event cannot open a stream")
-          onEvent(IncomingEvent(message.command, message.data!!))
-        }
+      is RequestMessage -> {
+        if (message.id != 0uL) TODO("incoming requests")
+        if (message.stream != 0uL) throw MalformedFrameException("an event cannot open a stream")
+        onEvent(IncomingEvent(message.command, message.data!!))
+      }
       is ResponseMessage -> {
+        val result = message.result
+        if (result is ResponseResult.Success && message.stream != 0uL) TODO("response streams")
         val reply = state.withLock { pending.remove(message.id) } ?: return
-        when (val result = message.result) {
+        when (result) {
           is RemoteError ->
             reply.completeExceptionally(RemoteException(result.message, result.code, result.errno))
-          is ResponseResult.Success -> reply.complete(result.data ?: TODO("response streams"))
+          is ResponseResult.Success -> reply.complete(result.data!!)
         }
       }
-      is StreamMessage -> {}
+      is StreamMessage -> TODO("streams")
     }
   }
 }
