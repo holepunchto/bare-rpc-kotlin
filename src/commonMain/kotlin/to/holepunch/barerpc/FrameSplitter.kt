@@ -3,7 +3,7 @@ package to.holepunch.barerpc
 import to.holepunch.compactencoding.State
 import to.holepunch.compactencoding.uint32
 
-internal class FrameSplitter {
+internal class FrameSplitter(private val maxFrameSize: UInt = 16u * 1024u * 1024u) {
   private var buffered = ByteArray(0)
 
   fun push(bytes: ByteArray): List<ByteArray> {
@@ -13,6 +13,15 @@ internal class FrameSplitter {
     while (state.remaining >= 4) {
       val mark = state.start
       val length = uint32.decode(state)
+      if (4uL + length > maxFrameSize) {
+        if (frames.isEmpty()) {
+          throw MalformedFrameException(
+            "frame of ${4uL + length} bytes exceeds the cap of $maxFrameSize bytes"
+          )
+        }
+        state.start = mark
+        break
+      }
       if (length > state.remaining.toUInt()) {
         state.start = mark
         break

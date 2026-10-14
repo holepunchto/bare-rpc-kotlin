@@ -2,6 +2,7 @@ package to.holepunch.barerpc
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 
 class FrameSplitterTest {
   private val first = "050000000101000000".hexToByteArray()
@@ -43,9 +44,26 @@ class FrameSplitterTest {
   }
 
   @Test
-  fun `a frame longer than what has arrived waits for the rest`() {
+  fun `a length past the default cap fails`() {
+    assertFailsWith<MalformedFrameException> { FrameSplitter().push("ffffffff".hexToByteArray()) }
+  }
+
+  @Test
+  fun `a frame longer than the cap fails as soon as its length arrives`() {
+    assertFailsWith<MalformedFrameException> {
+      FrameSplitter(maxFrameSize = 8u).push("05000000".hexToByteArray())
+    }
+  }
+
+  @Test
+  fun `a frame as long as the cap comes out`() {
+    assertEquals(listOf(first.toList()), FrameSplitter(maxFrameSize = 9u).frames(first))
+  }
+
+  @Test
+  fun `frames before a length past the cap come out before it fails`() {
     val splitter = FrameSplitter()
-    assertEquals(emptyList(), splitter.frames("ffffffff01".hexToByteArray()))
-    assertEquals(emptyList(), splitter.frames(ByteArray(1024)))
+    assertEquals(listOf(first.toList()), splitter.frames(first + "ffffffff".hexToByteArray()))
+    assertFailsWith<MalformedFrameException> { splitter.push(ByteArray(0)) }
   }
 }
