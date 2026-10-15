@@ -41,7 +41,8 @@ public class BareRpc(
   /**
    * Sends [data] to the peer as an event for [command], which gets no reply.
    *
-   * @throws Throwable the failure that closed the connection.
+   * @throws Throwable the failure that closed the connection, a [ConnectionClosedException] after
+   *   [close].
    */
   public suspend fun event(command: ULong, data: ByteArray) {
     state.withLock {
@@ -56,7 +57,8 @@ public class BareRpc(
    * Sends [data] to the peer as a request for [command] and returns the reply.
    *
    * @throws RemoteException if the peer replies with an error.
-   * @throws Throwable the failure that closed the connection.
+   * @throws Throwable the failure that closed the connection, a [ConnectionClosedException] after
+   *   [close].
    */
   public suspend fun request(command: ULong, data: ByteArray): ByteArray {
     val reply = CompletableDeferred<ByteArray>()
@@ -84,12 +86,16 @@ public class BareRpc(
    * @throws RpcException if a frame cannot be read. Any failure closes the connection: one thrown
    *   by [onEvent], and one from [send]. Pending requests and every later call then throw the same
    *   exception. An exception from [onRequest] goes back to the peer instead, and cancelling the
-   *   call leaves the connection open.
+   *   call leaves the connection open. After [close], including one from a handler, the rest of the
+   *   bytes go undelivered and this throws a [ConnectionClosedException].
    */
   public suspend fun receive(bytes: ByteArray) {
     state.withLock { failure }?.let { throw it }
     try {
-      for (frameBytes in splitter.push(bytes)) dispatch(decode(frame, frameBytes))
+      for (frameBytes in splitter.push(bytes)) {
+        state.withLock { failure }?.let { throw it }
+        dispatch(decode(frame, frameBytes))
+      }
       splitter.push(ByteArray(0))
     } catch (e: Throwable) {
       if (e is CancellationException) currentCoroutineContext().ensureActive()
@@ -101,7 +107,7 @@ public class BareRpc(
   /**
    * Closes the connection: pending requests and every later call throw a
    * [ConnectionClosedException]. Closing after a failure keeps that failure. The transport stays
-   * open; closing it is the caller's.
+   * open; the caller closes it.
    */
   public suspend fun close() {
     fail(ConnectionClosedException())
