@@ -4,6 +4,7 @@ public final class to/holepunch/barerpc/BareRpc {
 	public final fun close (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun event-E0BElUM (J[BLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun receive ([BLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun request-E0BElUM (JLkotlinx/coroutines/flow/Flow;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun request-E0BElUM (J[BLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
 
