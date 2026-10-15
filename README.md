@@ -18,7 +18,7 @@ dependencies {
 
 ## Usage
 
-[`UsageTest.kt`](src/commonTest/kotlin/to/holepunch/barerpc/usage/UsageTest.kt) connects two ends over in-memory channels and answers a request through a `CommandRouter`. A real transport takes the channels' place: give `BareRpc` a `send` that writes each frame to it, and pass every chunk it reads to `receive` from a single read loop. When `receive` throws, the connection is closed: stop the loop and close the transport. `send` may suspend for backpressure, but must not wait on this end's own read loop.
+[`UsageTest.kt`](src/commonTest/kotlin/to/holepunch/barerpc/usage/UsageTest.kt) connects two ends over in-memory channels and answers a request through a `CommandRouter`. A real transport takes the channels' place: give `BareRpc` a `send` that writes each frame to it, and pass every chunk it reads to `receive` from a single read loop. When `receive` throws, the connection is closed: stop the loop and close the transport. When the transport ends, or you close it, call `BareRpc.close`: pending and later calls then throw `ConnectionClosedException`. `send` may suspend for backpressure, but must not wait on this end's own read loop.
 
 ## API
 
