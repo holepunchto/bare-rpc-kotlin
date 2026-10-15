@@ -83,8 +83,26 @@ private const val REQUEST = 1uL
 private const val RESPONSE = 2uL
 private const val STREAM = 3uL
 
-private const val STREAM_DATA = 0x10uL
+internal const val STREAM_OPEN = 0x1uL
+internal const val STREAM_CLOSE = 0x2uL
+internal const val STREAM_PAUSE = 0x4uL
+internal const val STREAM_RESUME = 0x8uL
+internal const val STREAM_DATA = 0x10uL
+internal const val STREAM_END = 0x20uL
+internal const val STREAM_DESTROY = 0x40uL
 private const val STREAM_ERROR = 0x80uL
+internal const val STREAM_REQUEST = 0x100uL
+
+internal val streamEvents =
+  listOf(
+    STREAM_OPEN,
+    STREAM_CLOSE,
+    STREAM_PAUSE,
+    STREAM_RESUME,
+    STREAM_DATA,
+    STREAM_END,
+    STREAM_DESTROY,
+  )
 
 private val body: Codec<Message> =
   object : Codec<Message> {

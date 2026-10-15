@@ -4,6 +4,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.flowOf
 
 class InteropTest {
   @Test
@@ -40,5 +41,27 @@ class InteropTest {
       Triple("Unknown command 7", "ERR_UNKNOWN_COMMAND", 0L),
       Triple(error.message, error.code, error.errno),
     )
+  }
+
+  @Test
+  fun `a request stream reaches the JS peer`() = withPeer { rpc ->
+    assertEquals(
+      "hihi",
+      rpc
+        .request(
+          4u,
+          flowOf(
+            "hi".encodeToByteArray(),
+            "hi".encodeToByteArray(),
+          ),
+        )
+        .decodeToString(),
+    )
+  }
+
+  @Test
+  fun `a large request stream chunk reaches the JS peer`() = withPeer { rpc ->
+    val reply = rpc.request(4u, flowOf(ByteArray(32 * 1024) { 1 }))
+    assertEquals(reply.size, 32 * 1024)
   }
 }

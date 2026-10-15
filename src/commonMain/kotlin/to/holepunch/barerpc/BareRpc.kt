@@ -5,6 +5,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -35,6 +36,7 @@ public class BareRpc(
   private val state = Mutex()
   private var lastId = 0uL
   private val pending = mutableMapOf<ULong, CompletableDeferred<ByteArray>>()
+  private val acks = mutableMapOf<ULong, CompletableDeferred<Boolean>>()
   private val outgoing = ArrayDeque<ByteArray>()
   private var failure: Throwable? = null
 
@@ -79,6 +81,44 @@ public class BareRpc(
   }
 
   /**
+   * Sends a request for [command] whose payload is [body], streamed to the peer once it accepts the
+   * stream, and returns the reply. A reply that comes before the peer accepts the stream skips
+   * [body].
+   *
+   * @throws RemoteException if the peer replies with an error.
+   * @throws Throwable the failure that closed the connection, a [ConnectionClosedException] after
+   *   [close].
+   */
+  public suspend fun request(command: ULong, body: Flow<ByteArray>): ByteArray {
+    val reply = CompletableDeferred<ByteArray>()
+    val accepted = CompletableDeferred<Boolean>()
+    var id = 0uL
+    try {
+      state.withLock {
+        failure?.let { throw it }
+        id = ++lastId
+        pending[id] = reply
+        acks[id] = accepted
+        outgoing.addLast(encode(frame, RequestMessage(id, command, STREAM_OPEN, null)))
+      }
+      sending.withLock { drain() }
+      flush()
+      if (accepted.await()) {
+        body.collect { sendMessage(StreamMessage(id, STREAM_REQUEST or STREAM_DATA, it, null)) }
+        sendMessage(StreamMessage(id, STREAM_REQUEST or STREAM_END, null, null))
+      }
+      return reply.await()
+    } finally {
+      withContext(NonCancellable) {
+        state.withLock {
+          pending.remove(id)
+          acks.remove(id)
+        }
+      }
+    }
+  }
+
+  /**
    * Reads [bytes] received from the peer, in arrival order, and delivers each whole frame. Calls
    * must not overlap, and must not come from [onEvent] or [onRequest]. Replies to requests never
    * wait for a send in progress.
@@ -113,6 +153,15 @@ public class BareRpc(
     fail(ConnectionClosedException())
   }
 
+  private suspend fun sendMessage(message: Message) {
+    state.withLock {
+      failure?.let { throw it }
+      outgoing.addLast(encode(frame, message))
+    }
+    sending.withLock { drain() }
+    flush()
+  }
+
   private suspend fun drain() {
     while (true) {
       val next =
@@ -145,7 +194,10 @@ public class BareRpc(
       if (failure != null) return
       failure = cause
       outgoing.clear()
-      pending.values.toList().also { pending.clear() }
+      (pending.values + acks.values).also {
+        pending.clear()
+        acks.clear()
+      }
     }
     waiting.forEach { it.completeExceptionally(cause) }
   }
@@ -162,14 +214,27 @@ public class BareRpc(
       is ResponseMessage -> {
         val result = message.result
         if (result is ResponseResult.Success && message.stream != 0uL) TODO("response streams")
-        val reply = state.withLock { pending.remove(message.id) } ?: return
+        val (reply, accepted) =
+          state.withLock { pending.remove(message.id) to acks.remove(message.id) }
+        accepted?.complete(false)
+        if (reply == null) return
         when (result) {
           is RemoteError ->
             reply.completeExceptionally(RemoteException(result.message, result.code, result.errno))
           is ResponseResult.Success -> reply.complete(result.data!!)
         }
       }
-      is StreamMessage -> TODO("streams")
+      is StreamMessage -> {
+        if (message.id == 0uL) return
+        val event = streamEvents.firstOrNull { message.flags and it != 0uL } ?: return
+        when {
+          message.flags and STREAM_REQUEST == 0uL -> TODO("streams")
+          event == STREAM_OPEN -> state.withLock { acks.remove(message.id) }?.complete(true)
+          event == STREAM_PAUSE || event == STREAM_RESUME -> Unit
+          event == STREAM_DESTROY && message.error == null -> Unit
+          else -> TODO("streams")
+        }
+      }
     }
   }
 

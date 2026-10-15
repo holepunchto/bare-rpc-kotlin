@@ -23,6 +23,11 @@ const rpc = new RPC(stream, async (request) => {
     case 3:
       if (request.reply) throw new Error('Command 3 is an event')
       return rpc.event(3).send(request.data)
+    case 4: {
+      const chunks = []
+      for await (const chunk of request.createRequestStream()) chunks.push(chunk)
+      return request.reply(Buffer.concat(chunks))
+    }
     default:
       throw new Error(`Unknown command ${request.command}`)
   }
