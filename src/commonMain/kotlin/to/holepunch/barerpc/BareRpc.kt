@@ -2,10 +2,15 @@ package to.holepunch.barerpc
 
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.consumeAsFlow
+import kotlinx.coroutines.flow.onStart
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -22,6 +27,8 @@ import to.holepunch.compactencoding.encode
  *   exception it throws goes back as an error, a [RemoteException] as itself. By default every
  *   request is rejected as an unknown command.
  * @param maxFrameSize the longest frame [receive] accepts, length prefix included.
+ * @param scope runs the handlers of requests that stream a body, which need later [receive] calls
+ *   to read it. Without a scope such requests are rejected.
  */
 public class BareRpc(
   private val send: suspend (ByteArray) -> Unit,
@@ -30,6 +37,7 @@ public class BareRpc(
     throw unknownCommand(it.command)
   },
   maxFrameSize: UInt = DEFAULT_MAX_FRAME_SIZE,
+  private val scope: CoroutineScope? = null,
 ) {
   private val splitter = FrameSplitter(maxFrameSize)
   private val sending = Mutex()
@@ -37,6 +45,7 @@ public class BareRpc(
   private var lastId = 0uL
   private val pending = mutableMapOf<ULong, CompletableDeferred<ByteArray>>()
   private val acks = mutableMapOf<ULong, CompletableDeferred<Boolean>>()
+  private val requestBodies = mutableMapOf<ULong, Channel<ByteArray>>()
   private val outgoing = ArrayDeque<ByteArray>()
   private var failure: Throwable? = null
 
@@ -174,16 +183,20 @@ public class BareRpc(
   }
 
   private suspend fun fail(cause: Throwable) {
-    val waiting = state.withLock {
+    val waiting: List<CompletableDeferred<*>>
+    val bodies: List<Channel<ByteArray>>
+    state.withLock {
       if (failure != null) return
       failure = cause
       outgoing.clear()
-      (pending.values + acks.values).also {
-        pending.clear()
-        acks.clear()
-      }
+      waiting = pending.values + acks.values
+      bodies = requestBodies.values.toList()
+      pending.clear()
+      acks.clear()
+      requestBodies.clear()
     }
     waiting.forEach { it.completeExceptionally(cause) }
+    bodies.forEach { it.close(cause) }
   }
 
   private suspend fun dispatch(message: Message) {
@@ -215,6 +228,10 @@ public class BareRpc(
           message.flags and STREAM_REQUEST == 0uL -> TODO("streams")
           event == STREAM_OPEN -> state.withLock { acks.remove(message.id) }?.complete(true)
           event == STREAM_PAUSE || event == STREAM_RESUME -> Unit
+          event == STREAM_DATA ->
+            state.withLock { requestBodies[message.id] }?.trySend(message.data!!)
+          event == STREAM_END || event == STREAM_CLOSE && message.error == null ->
+            state.withLock { requestBodies[message.id] }?.close()
           event == STREAM_DESTROY && message.error == null -> Unit
           else -> TODO("streams")
         }
@@ -223,17 +240,42 @@ public class BareRpc(
   }
 
   private suspend fun answer(request: RequestMessage) {
-    if (request.stream != 0uL) TODO("request streams")
+    if (request.stream == 0uL) {
+      return reply(request.id) { onRequest(IncomingRequest(request.command, request.data!!, null)) }
+    }
+    val scope = scope ?: return reply(request.id) { throw noScope() }
+    val chunks = Channel<ByteArray>(Channel.UNLIMITED)
+    state.withLock {
+      failure?.let { throw it }
+      requestBodies[request.id] = chunks
+    }
+    val body =
+      chunks.consumeAsFlow().onStart {
+        sendMessage { StreamMessage(request.id, STREAM_REQUEST or STREAM_OPEN, null, null) }
+      }
+    scope.launch {
+      try {
+        reply(request.id) { onRequest(IncomingRequest(request.command, ByteArray(0), body)) }
+      } catch (e: Throwable) {
+        // Every error here is the connection's failure, which receive and request already throw.
+        if (e is CancellationException) currentCoroutineContext().ensureActive()
+      } finally {
+        withContext(NonCancellable) { state.withLock { requestBodies.remove(request.id) } }
+      }
+    }
+  }
+
+  private suspend fun reply(id: ULong, handler: suspend () -> ByteArray) {
     val result =
       try {
-        ResponseResult.Success(onRequest(IncomingRequest(request.command, request.data!!)))
+        ResponseResult.Success(handler())
       } catch (e: RemoteException) {
         RemoteError(e.message.orEmpty(), e.code, e.errno)
       } catch (e: Throwable) {
         if (e is CancellationException) currentCoroutineContext().ensureActive()
         RemoteError(e.message.orEmpty(), "", 0)
       }
-    state.withLock { outgoing.addLast(encode(frame, ResponseMessage(request.id, 0u, result))) }
+    state.withLock { outgoing.addLast(encode(frame, ResponseMessage(id, 0u, result))) }
     flush()
   }
 }
@@ -242,10 +284,16 @@ public class BareRpc(
  * A request received from the peer.
  *
  * @property command the command the request names.
- * @property data the request's payload.
+ * @property data the request's payload, empty when it streams a [body].
+ * @property body the request's streamed payload, or null. Collecting it accepts the stream, and it
+ *   can be collected once.
  */
 public class IncomingRequest
-internal constructor(public val command: ULong, public val data: ByteArray)
+internal constructor(
+  public val command: ULong,
+  public val data: ByteArray,
+  public val body: Flow<ByteArray>?,
+)
 
 /**
  * An event received from the peer.

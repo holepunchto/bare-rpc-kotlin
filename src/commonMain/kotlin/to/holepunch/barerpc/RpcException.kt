@@ -31,5 +31,7 @@ public class RemoteException(message: String, public val code: String, public va
 /** The connection was closed by [BareRpc.close]. */
 public class ConnectionClosedException internal constructor() : RpcException("Connection closed")
 
+internal fun noScope() = RemoteException("Request streams need a scope", "ERR_NO_SCOPE", 0)
+
 internal fun unknownCommand(command: ULong) =
   RemoteException("Unknown command $command", "ERR_UNKNOWN_COMMAND", 0)

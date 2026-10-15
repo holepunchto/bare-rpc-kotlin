@@ -5,6 +5,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.fold
 
 class InteropTest {
   @Test
@@ -64,4 +65,10 @@ class InteropTest {
     val reply = rpc.request(4u, flowOf(ByteArray(32 * 1024) { 1 }))
     assertEquals(reply.size, 32 * 1024)
   }
+
+  @Test
+  fun `a request stream from the JS peer reaches the Kotlin handler`() =
+    withPeer(onRequest = { it.body!!.fold(ByteArray(0)) { a, b -> a + b } }) { rpc ->
+      assertEquals("hi", rpc.request(5u, "hi".encodeToByteArray()).decodeToString())
+    }
 }

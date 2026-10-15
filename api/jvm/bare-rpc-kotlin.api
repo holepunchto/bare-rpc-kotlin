@@ -1,6 +1,6 @@
 public final class to/holepunch/barerpc/BareRpc {
-	public synthetic fun <init> (Lkotlin/jvm/functions/Function2;Lkotlin/jvm/functions/Function2;Lkotlin/jvm/functions/Function2;IILkotlin/jvm/internal/DefaultConstructorMarker;)V
-	public synthetic fun <init> (Lkotlin/jvm/functions/Function2;Lkotlin/jvm/functions/Function2;Lkotlin/jvm/functions/Function2;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Lkotlin/jvm/functions/Function2;Lkotlin/jvm/functions/Function2;Lkotlin/jvm/functions/Function2;ILkotlinx/coroutines/CoroutineScope;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Lkotlin/jvm/functions/Function2;Lkotlin/jvm/functions/Function2;Lkotlin/jvm/functions/Function2;ILkotlinx/coroutines/CoroutineScope;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun close (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun event-E0BElUM (J[BLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun receive ([BLkotlin/coroutines/Continuation;)Ljava/lang/Object;
@@ -25,6 +25,7 @@ public final class to/holepunch/barerpc/IncomingEvent {
 }
 
 public final class to/holepunch/barerpc/IncomingRequest {
+	public final fun getBody ()Lkotlinx/coroutines/flow/Flow;
 	public final fun getCommand-s-VKNKU ()J
 	public final fun getData ()[B
 }
