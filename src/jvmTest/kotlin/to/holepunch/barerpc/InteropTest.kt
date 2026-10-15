@@ -2,10 +2,43 @@ package to.holepunch.barerpc
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlinx.coroutines.channels.Channel
 
 class InteropTest {
   @Test
   fun `a request to the JS peer comes back`() = withPeer { rpc ->
     assertEquals("hi", rpc.request(0u, "hi".encodeToByteArray()).decodeToString())
+  }
+
+  @Test
+  fun `an error from the JS peer arrives as a remote exception`() = withPeer { rpc ->
+    val error = assertFailsWith<RemoteException> { rpc.request(1u, ByteArray(0)) }
+    assertEquals(Triple("boom", "E_PEER", 7L), Triple(error.message, error.code, error.errno))
+  }
+
+  @Test
+  fun `a request from the JS peer reaches the Kotlin handler`() =
+    withPeer(onRequest = { "${it.command}:${it.data.decodeToString()}".encodeToByteArray() }) { rpc
+      ->
+      assertEquals("7:hi", rpc.request(2u, "hi".encodeToByteArray()).decodeToString())
+    }
+
+  @Test
+  fun `an event to the JS peer comes back as an event`() {
+    val events = Channel<String>(1)
+    withPeer(onEvent = { events.send("${it.command}:${it.data.decodeToString()}") }) { rpc ->
+      rpc.event(3u, "hi".encodeToByteArray())
+      assertEquals("3:hi", events.receive())
+    }
+  }
+
+  @Test
+  fun `a command Kotlin does not know goes back to the JS peer as an error`() = withPeer { rpc ->
+    val error = assertFailsWith<RemoteException> { rpc.request(2u, ByteArray(0)) }
+    assertEquals(
+      Triple("Unknown command 7", "ERR_UNKNOWN_COMMAND", 0L),
+      Triple(error.message, error.code, error.errno),
+    )
   }
 }
