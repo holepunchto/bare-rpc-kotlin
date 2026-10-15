@@ -47,12 +47,7 @@ public class BareRpc(
    *   [close].
    */
   public suspend fun event(command: ULong, data: ByteArray) {
-    state.withLock {
-      failure?.let { throw it }
-      outgoing.addLast(encode(frame, RequestMessage(0u, command, 0u, data)))
-    }
-    sending.withLock { drain() }
-    flush()
+    sendMessage { RequestMessage(0u, command, 0u, data) }
   }
 
   /**
@@ -62,23 +57,8 @@ public class BareRpc(
    * @throws Throwable the failure that closed the connection, a [ConnectionClosedException] after
    *   [close].
    */
-  public suspend fun request(command: ULong, data: ByteArray): ByteArray {
-    val reply = CompletableDeferred<ByteArray>()
-    var id = 0uL
-    try {
-      state.withLock {
-        failure?.let { throw it }
-        id = ++lastId
-        pending[id] = reply
-        outgoing.addLast(encode(frame, RequestMessage(id, command, 0u, data)))
-      }
-      sending.withLock { drain() }
-      flush()
-      return reply.await()
-    } finally {
-      withContext(NonCancellable) { state.withLock { pending.remove(id) } }
-    }
-  }
+  public suspend fun request(command: ULong, data: ByteArray): ByteArray =
+    sendRequest(command, data, null)
 
   /**
    * Sends a request for [command] whose payload is [body], streamed to the peer once it accepts the
@@ -89,34 +69,8 @@ public class BareRpc(
    * @throws Throwable the failure that closed the connection, a [ConnectionClosedException] after
    *   [close].
    */
-  public suspend fun request(command: ULong, body: Flow<ByteArray>): ByteArray {
-    val reply = CompletableDeferred<ByteArray>()
-    val accepted = CompletableDeferred<Boolean>()
-    var id = 0uL
-    try {
-      state.withLock {
-        failure?.let { throw it }
-        id = ++lastId
-        pending[id] = reply
-        acks[id] = accepted
-        outgoing.addLast(encode(frame, RequestMessage(id, command, STREAM_OPEN, null)))
-      }
-      sending.withLock { drain() }
-      flush()
-      if (accepted.await()) {
-        body.collect { sendMessage(StreamMessage(id, STREAM_REQUEST or STREAM_DATA, it, null)) }
-        sendMessage(StreamMessage(id, STREAM_REQUEST or STREAM_END, null, null))
-      }
-      return reply.await()
-    } finally {
-      withContext(NonCancellable) {
-        state.withLock {
-          pending.remove(id)
-          acks.remove(id)
-        }
-      }
-    }
-  }
+  public suspend fun request(command: ULong, body: Flow<ByteArray>): ByteArray =
+    sendRequest(command, null, body)
 
   /**
    * Reads [bytes] received from the peer, in arrival order, and delivers each whole frame. Calls
@@ -153,10 +107,40 @@ public class BareRpc(
     fail(ConnectionClosedException())
   }
 
-  private suspend fun sendMessage(message: Message) {
+  private suspend fun sendRequest(
+    command: ULong,
+    data: ByteArray?,
+    body: Flow<ByteArray>?,
+  ): ByteArray {
+    val reply = CompletableDeferred<ByteArray>()
+    val accepted = CompletableDeferred<Boolean>()
+    var id = 0uL
+    try {
+      sendMessage {
+        id = ++lastId
+        pending[id] = reply
+        if (body != null) acks[id] = accepted
+        RequestMessage(id, command, if (body != null) STREAM_OPEN else 0u, data)
+      }
+      if (body != null && accepted.await()) {
+        body.collect { sendMessage { StreamMessage(id, STREAM_REQUEST or STREAM_DATA, it, null) } }
+        sendMessage { StreamMessage(id, STREAM_REQUEST or STREAM_END, null, null) }
+      }
+      return reply.await()
+    } finally {
+      withContext(NonCancellable) {
+        state.withLock {
+          pending.remove(id)
+          acks.remove(id)
+        }
+      }
+    }
+  }
+
+  private suspend fun sendMessage(message: () -> Message) {
     state.withLock {
       failure?.let { throw it }
-      outgoing.addLast(encode(frame, message))
+      outgoing.addLast(encode(frame, message()))
     }
     sending.withLock { drain() }
     flush()
