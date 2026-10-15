@@ -1,6 +1,7 @@
 public final class to/holepunch/barerpc/BareRpc {
 	public synthetic fun <init> (Lkotlin/jvm/functions/Function2;Lkotlin/jvm/functions/Function2;Lkotlin/jvm/functions/Function2;IILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public synthetic fun <init> (Lkotlin/jvm/functions/Function2;Lkotlin/jvm/functions/Function2;Lkotlin/jvm/functions/Function2;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun close (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun event-E0BElUM (J[BLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun receive ([BLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun request-E0BElUM (J[BLkotlin/coroutines/Continuation;)Ljava/lang/Object;
@@ -12,6 +13,9 @@ public final class to/holepunch/barerpc/CommandRouter {
 	public final fun dispatch (Lto/holepunch/barerpc/IncomingRequest;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun onEvent-4PLdz1A (JLkotlin/jvm/functions/Function2;)V
 	public final fun onRequest-4PLdz1A (JLkotlin/jvm/functions/Function2;)V
+}
+
+public final class to/holepunch/barerpc/ConnectionClosedException : to/holepunch/barerpc/RpcException {
 }
 
 public final class to/holepunch/barerpc/IncomingEvent {
