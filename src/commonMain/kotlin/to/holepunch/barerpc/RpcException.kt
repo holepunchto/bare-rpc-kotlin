@@ -28,5 +28,8 @@ internal constructor(message: String, cause: Throwable? = null) : RpcException(m
 public class RemoteException(message: String, public val code: String, public val errno: Long) :
   RpcException(message)
 
+/** The connection was closed by [BareRpc.close]. */
+public class ConnectionClosedException internal constructor() : RpcException("Connection closed")
+
 internal fun unknownCommand(command: ULong) =
   RemoteException("Unknown command $command", "ERR_UNKNOWN_COMMAND", 0)

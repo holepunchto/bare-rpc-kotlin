@@ -93,9 +93,18 @@ public class BareRpc(
       splitter.push(ByteArray(0))
     } catch (e: Throwable) {
       if (e is CancellationException) currentCoroutineContext().ensureActive()
-      close(e)
+      fail(e)
       throw e
     }
+  }
+
+  /**
+   * Closes the connection: pending requests and every later call throw a
+   * [ConnectionClosedException]. Closing after a failure keeps that failure. The transport stays
+   * open; closing it is the caller's.
+   */
+  public suspend fun close() {
+    fail(ConnectionClosedException())
   }
 
   private suspend fun drain() {
@@ -109,7 +118,7 @@ public class BareRpc(
         send(next)
       } catch (e: Throwable) {
         if (e is CancellationException) currentCoroutineContext().ensureActive()
-        close(e)
+        fail(e)
         throw e
       }
     }
@@ -125,7 +134,7 @@ public class BareRpc(
     }
   }
 
-  private suspend fun close(cause: Throwable) {
+  private suspend fun fail(cause: Throwable) {
     val waiting = state.withLock {
       if (failure != null) return
       failure = cause
