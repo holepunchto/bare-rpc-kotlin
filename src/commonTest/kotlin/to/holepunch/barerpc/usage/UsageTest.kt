@@ -16,9 +16,10 @@ class UsageTest {
     val toClient = Channel<ByteArray>(Channel.UNLIMITED)
 
     val router = CommandRouter()
-    router.onRequest(1u) { "hello ${it.data.decodeToString()}".encodeToByteArray() }
+    router.onRequest(1u) { request -> "hello ${request.data.decodeToString()}".encodeToByteArray() }
 
-    val server = BareRpc(send = toClient::send, onRequest = router::dispatch)
+    val server =
+      BareRpc(send = toClient::send, onRequest = router::dispatch, onEvent = router::dispatch)
     val client = BareRpc(send = toServer::send)
 
     launch { for (bytes in toServer) server.receive(bytes) }
