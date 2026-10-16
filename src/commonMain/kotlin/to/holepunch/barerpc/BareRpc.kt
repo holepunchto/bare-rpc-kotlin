@@ -3,6 +3,7 @@ package to.holepunch.barerpc
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
@@ -16,6 +17,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.onStart
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -60,6 +62,8 @@ public class BareRpc(
   private val replyAcks = mutableMapOf<ULong, CompletableDeferred<Unit>>()
   private val requestPauses = mutableMapOf<ULong, MutableStateFlow<Boolean>>()
   private val replyPauses = mutableMapOf<ULong, MutableStateFlow<Boolean>>()
+  private val requestSenders = mutableMapOf<ULong, Job>()
+  private val replySenders = mutableMapOf<ULong, Job>()
   private val earlyReplyAcks = mutableSetOf<ULong>()
   private val outgoing = ArrayDeque<ByteArray>()
   private var failure: Throwable? = null
@@ -177,7 +181,7 @@ public class BareRpc(
         RequestMessage(id, command, if (body != null) STREAM_OPEN else 0u, data)
       }
       return coroutineScope {
-        val sender = body?.let { launch { if (accepted.await()) sendRequestBody(id, it, paused) } }
+        val sender = body?.let { launch { sendRequestBody(id, it, accepted, paused) } }
         reply.await().also { sender?.cancel() }
       }
     } finally {
@@ -186,6 +190,7 @@ public class BareRpc(
           pending.remove(id)
           requestAcks.remove(id)
           requestPauses.remove(id)
+          requestSenders.remove(id)
         }
       }
     }
@@ -212,7 +217,7 @@ public class BareRpc(
       }
       sendMessage { StreamMessage(id, STREAM_RESPONSE or STREAM_OPEN, null, null) }
       coroutineScope {
-        val sender = body?.let { launch { if (accepted.await()) sendRequestBody(id, it, paused) } }
+        val sender = body?.let { launch { sendRequestBody(id, it, accepted, paused) } }
         for (chunk in inbox.chunks) {
           take(id, inbox, chunk)
           emit(chunk)
@@ -225,6 +230,7 @@ public class BareRpc(
           replyBodies.remove(id)
           requestAcks.remove(id)
           requestPauses.remove(id)
+          requestSenders.remove(id)
         }
       }
     }
@@ -233,8 +239,11 @@ public class BareRpc(
   private suspend fun sendRequestBody(
     id: ULong,
     body: Flow<ByteArray>,
+    accepted: CompletableDeferred<Boolean>,
     paused: MutableStateFlow<Boolean>,
   ) {
+    state.withLock { requestSenders[id] = currentCoroutineContext().job }
+    if (!accepted.await()) return
     body.collect {
       paused.awaitResume()
       sendMessage { StreamMessage(id, STREAM_REQUEST or STREAM_DATA, it, null) }
@@ -306,6 +315,8 @@ public class BareRpc(
       pauses = requestPauses.values + replyPauses.values
       requestPauses.clear()
       replyPauses.clear()
+      requestSenders.clear()
+      replySenders.clear()
       earlyReplyAcks.clear()
     }
     waiting.forEach { it.completeExceptionally(cause) }
@@ -383,8 +394,7 @@ public class BareRpc(
           .withLock { requestBodies[message.id] }
           ?.chunks
           ?.close(message.error?.let(::remoteException))
-      event == STREAM_DESTROY && message.error == null -> Unit
-      else -> TODO("streams")
+      event == STREAM_DESTROY -> state.withLock { requestSenders.remove(message.id) }?.cancel()
     }
   }
 
@@ -403,8 +413,7 @@ public class BareRpc(
         accepted?.complete(false)
         chunks?.close(if (event == STREAM_CLOSE) message.error?.let(::remoteException) else null)
       }
-      event == STREAM_DESTROY && message.error == null -> Unit
-      else -> TODO("streams")
+      event == STREAM_DESTROY -> state.withLock { replySenders.remove(message.id) }?.cancel()
     }
   }
 
@@ -459,8 +468,10 @@ public class BareRpc(
       {
         replyAcks.remove(id)
         replyPauses.remove(id)
+        replySenders.remove(id)
       },
     ) {
+      state.withLock { replySenders[id] = currentCoroutineContext().job }
       accepted.await()
       var error: Throwable? = null
       body

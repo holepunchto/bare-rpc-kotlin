@@ -21,6 +21,9 @@ class ResponseStreamTest {
   // "E_BOOM", errno 1
   private val pause = "050000000301fd0402" // stream id 1, response pause
   private val resume = "050000000301fd0802" // stream id 1, response resume
+  private val destroy = "050000000301fd4002" // stream id 1, response destroy
+  // stream id 1, response destroy error: "boom", "E_BOOM", errno 1
+  private val destroyError = "120000000301fdc00204626f6f6d06455f424f4f4d02"
 
   @Test
   fun `a streamed reply opens and waits for the ack before sending data`() = runTest {
@@ -129,6 +132,44 @@ class ResponseStreamTest {
     rpc.receive(pause.hexToByteArray())
     yield()
     rpc.close()
+    assertEquals(listOf(open), sent)
+  }
+
+  @Test
+  fun `a destroy stops the reply body`() = runTest {
+    val sent = mutableListOf<String>()
+    val rpc =
+      BareRpc(
+        send = { sent += it.toHexString() },
+        onRequest = { Reply.Stream(flowOf("hi".encodeToByteArray())) },
+        scope = this,
+      )
+    rpc.receive(request.hexToByteArray())
+    rpc.receive(ack.hexToByteArray())
+    rpc.receive(pause.hexToByteArray())
+    yield()
+    rpc.receive(destroy.hexToByteArray())
+    rpc.receive(resume.hexToByteArray())
+    yield()
+    assertEquals(listOf(open), sent)
+  }
+
+  @Test
+  fun `a destroy with an error stops the reply body`() = runTest {
+    val sent = mutableListOf<String>()
+    val rpc =
+      BareRpc(
+        send = { sent += it.toHexString() },
+        onRequest = { Reply.Stream(flowOf("hi".encodeToByteArray())) },
+        scope = this,
+      )
+    rpc.receive(request.hexToByteArray())
+    rpc.receive(ack.hexToByteArray())
+    rpc.receive(pause.hexToByteArray())
+    yield()
+    rpc.receive(destroyError.hexToByteArray())
+    rpc.receive(resume.hexToByteArray())
+    yield()
     assertEquals(listOf(open), sent)
   }
 }
