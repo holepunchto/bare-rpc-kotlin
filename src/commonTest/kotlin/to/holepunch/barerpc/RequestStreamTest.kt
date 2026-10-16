@@ -118,4 +118,18 @@ class RequestStreamTest {
       assertFailsWith<ConnectionClosedException> { reply.await() }
     }
   }
+
+  @Test
+  fun `a reply stops a paused request body`() = runTest {
+    val sent = mutableListOf<String>()
+    val rpc = BareRpc(send = { sent += it.toHexString() })
+    val reply = async { rpc.request(7u, flowOf("hi".encodeToByteArray())) }
+    yield()
+    rpc.receive(ack.hexToByteArray())
+    rpc.receive(pause.hexToByteArray())
+    yield()
+    rpc.receive(ok.hexToByteArray())
+    assertEquals("ok", reply.await().decodeToString())
+    assertEquals(listOf(open), sent)
+  }
 }

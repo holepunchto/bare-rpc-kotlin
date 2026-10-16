@@ -82,8 +82,8 @@ public class BareRpc(
 
   /**
    * Sends a request for [command] whose payload is [body], streamed to the peer once it accepts the
-   * stream, and returns the reply. A reply that comes before the peer accepts the stream skips
-   * [body].
+   * stream, and returns the reply. Sending [body] stops once the reply comes, which skips it if the
+   * peer has not accepted the stream yet.
    *
    * @throws RemoteException if the peer replies with an error.
    * @throws UnexpectedStreamException if the peer replies with a stream.
@@ -107,8 +107,8 @@ public class BareRpc(
   /**
    * Sends a request for [command] whose payload is [body], streamed to the peer once it accepts the
    * stream, and emits the reply while [body] is sent: each chunk of a streamed reply, or a single
-   * reply as one chunk. A single reply, or a streamed reply that ends, before the peer accepts the
-   * stream skips [body]. Each collection sends a new request.
+   * reply as one chunk. Sending [body] stops once a single reply comes or a streamed reply ends.
+   * Each collection sends a new request.
    *
    * @throws RemoteException if the peer replies or closes the stream with an error.
    * @throws Throwable the failure that closed the connection, a [ConnectionClosedException] after
@@ -159,6 +159,7 @@ public class BareRpc(
   ): ByteArray {
     val reply = CompletableDeferred<ByteArray>()
     val accepted = CompletableDeferred<Boolean>()
+    val paused = MutableStateFlow(false)
     var id = 0uL
     try {
       sendMessage {
@@ -166,12 +167,14 @@ public class BareRpc(
         pending[id] = reply
         if (body != null) {
           requestAcks[id] = accepted
-          requestPauses[id] = MutableStateFlow(false)
+          requestPauses[id] = paused
         }
         RequestMessage(id, command, if (body != null) STREAM_OPEN else 0u, data)
       }
-      if (body != null && accepted.await()) sendRequestBody(id, body)
-      return reply.await()
+      return coroutineScope {
+        val sender = body?.let { launch { if (accepted.await()) sendRequestBody(id, it, paused) } }
+        reply.await().also { sender?.cancel() }
+      }
     } finally {
       withContext(NonCancellable) {
         state.withLock {
@@ -190,6 +193,7 @@ public class BareRpc(
   ): Flow<ByteArray> = flow {
     val chunks = Channel<ByteArray>(Channel.UNLIMITED)
     val accepted = CompletableDeferred<Boolean>()
+    val paused = MutableStateFlow(false)
     var id = 0uL
     try {
       sendMessage {
@@ -197,14 +201,15 @@ public class BareRpc(
         replyBodies[id] = chunks
         if (body != null) {
           requestAcks[id] = accepted
-          requestPauses[id] = MutableStateFlow(false)
+          requestPauses[id] = paused
         }
         RequestMessage(id, command, if (body != null) STREAM_OPEN else 0u, data)
       }
       sendMessage { StreamMessage(id, STREAM_RESPONSE or STREAM_OPEN, null, null) }
       coroutineScope {
-        if (body != null) launch { if (accepted.await()) sendRequestBody(id, body) }
+        val sender = body?.let { launch { if (accepted.await()) sendRequestBody(id, it, paused) } }
         for (chunk in chunks) emit(chunk)
+        sender?.cancel()
       }
     } finally {
       withContext(NonCancellable) {
@@ -217,13 +222,16 @@ public class BareRpc(
     }
   }
 
-  private suspend fun sendRequestBody(id: ULong, body: Flow<ByteArray>) {
-    val paused = state.withLock { requestPauses[id] }
+  private suspend fun sendRequestBody(
+    id: ULong,
+    body: Flow<ByteArray>,
+    paused: MutableStateFlow<Boolean>,
+  ) {
     body.collect {
-      paused?.awaitResume()
+      paused.awaitResume()
       sendMessage { StreamMessage(id, STREAM_REQUEST or STREAM_DATA, it, null) }
     }
-    paused?.awaitResume()
+    paused.awaitResume()
     sendMessage { StreamMessage(id, STREAM_REQUEST or STREAM_END, null, null) }
   }
 

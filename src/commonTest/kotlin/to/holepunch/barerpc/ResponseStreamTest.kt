@@ -114,4 +114,21 @@ class ResponseStreamTest {
     yield()
     assertEquals(listOf(open, data, end), sent)
   }
+
+  @Test
+  fun `close releases a paused reply body`() = runTest {
+    val sent = mutableListOf<String>()
+    val rpc =
+      BareRpc(
+        send = { sent += it.toHexString() },
+        onRequest = { Reply.Stream(flowOf("hi".encodeToByteArray())) },
+        scope = this,
+      )
+    rpc.receive(request.hexToByteArray())
+    rpc.receive(ack.hexToByteArray())
+    rpc.receive(pause.hexToByteArray())
+    yield()
+    rpc.close()
+    assertEquals(listOf(open), sent)
+  }
 }
