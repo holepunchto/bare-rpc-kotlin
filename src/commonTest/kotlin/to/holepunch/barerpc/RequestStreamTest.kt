@@ -16,6 +16,8 @@ class RequestStreamTest {
   private val ack = "050000000301fd0101" // stream id 1, request open
   private val data = "080000000301fd1001026869" // stream id 1, request data "hi"
   private val end = "050000000301fd2001" // stream id 1, request end
+  private val pause = "050000000301fd0401" // stream id 1, request pause
+  private val resume = "050000000301fd0801" // stream id 1, request resume
   private val ok = "0700000002010000026f6b" // response id 1, "ok"
   private val boom =
     "110000000201010004626f6f6d06455f424f4f4d02" // error id 1: "boom", "E_BOOM", errno 1
@@ -85,5 +87,35 @@ class RequestStreamTest {
     rpc.receive(ok.hexToByteArray())
     assertEquals("ok", reply.await().decodeToString())
     assertEquals(listOf(open), sent)
+  }
+
+  @Test
+  fun `a pause holds the request body until resume`() = runTest {
+    val sent = mutableListOf<String>()
+    val rpc = BareRpc(send = { sent += it.toHexString() })
+    launch { rpc.request(7u, flowOf("hi".encodeToByteArray())) }
+    yield()
+    rpc.receive(ack.hexToByteArray())
+    rpc.receive(pause.hexToByteArray())
+    yield()
+    assertEquals(listOf(open), sent)
+    rpc.receive(resume.hexToByteArray())
+    yield()
+    assertEquals(listOf(open, data, end), sent)
+    coroutineContext.cancelChildren()
+  }
+
+  @Test
+  fun `close releases a paused request body`() = runTest {
+    supervisorScope {
+      val rpc = BareRpc(send = {})
+      val reply = async { rpc.request(7u, flowOf("hi".encodeToByteArray())) }
+      yield()
+      rpc.receive(ack.hexToByteArray())
+      rpc.receive(pause.hexToByteArray())
+      yield()
+      rpc.close()
+      assertFailsWith<ConnectionClosedException> { reply.await() }
+    }
   }
 }

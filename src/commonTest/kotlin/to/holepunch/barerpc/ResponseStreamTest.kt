@@ -18,8 +18,9 @@ class ResponseStreamTest {
   private val request = "0700000001010700026869" // request id 1, command 7, "hi"
   private val closeError =
     "120000000301fd820204626f6f6d06455f424f4f4d02" // stream id 1, response close error: "boom",
-
   // "E_BOOM", errno 1
+  private val pause = "050000000301fd0402" // stream id 1, response pause
+  private val resume = "050000000301fd0802" // stream id 1, response resume
 
   @Test
   fun `a streamed reply opens and waits for the ack before sending data`() = runTest {
@@ -93,5 +94,24 @@ class ResponseStreamTest {
     rpc.receive(ack.hexToByteArray())
     yield()
     assertEquals(listOf(open, closeError), sent)
+  }
+
+  @Test
+  fun `a pause holds the reply body until resume`() = runTest {
+    val sent = mutableListOf<String>()
+    val rpc =
+      BareRpc(
+        send = { sent += it.toHexString() },
+        onRequest = { Reply.Stream(flowOf("hi".encodeToByteArray())) },
+        scope = this,
+      )
+    rpc.receive(request.hexToByteArray())
+    rpc.receive(ack.hexToByteArray())
+    rpc.receive(pause.hexToByteArray())
+    yield()
+    assertEquals(listOf(open), sent)
+    rpc.receive(resume.hexToByteArray())
+    yield()
+    assertEquals(listOf(open, data, end), sent)
   }
 }

@@ -9,8 +9,10 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.consumeAsFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.launch
@@ -51,6 +53,8 @@ public class BareRpc(
   private val requestBodies = mutableMapOf<ULong, Channel<ByteArray>>()
   private val replyBodies = mutableMapOf<ULong, Channel<ByteArray>>()
   private val replyAcks = mutableMapOf<ULong, CompletableDeferred<Unit>>()
+  private val requestPauses = mutableMapOf<ULong, MutableStateFlow<Boolean>>()
+  private val replyPauses = mutableMapOf<ULong, MutableStateFlow<Boolean>>()
   private val earlyReplyAcks = mutableSetOf<ULong>()
   private val outgoing = ArrayDeque<ByteArray>()
   private var failure: Throwable? = null
@@ -160,7 +164,10 @@ public class BareRpc(
       sendMessage {
         id = ++lastId
         pending[id] = reply
-        if (body != null) requestAcks[id] = accepted
+        if (body != null) {
+          requestAcks[id] = accepted
+          requestPauses[id] = MutableStateFlow(false)
+        }
         RequestMessage(id, command, if (body != null) STREAM_OPEN else 0u, data)
       }
       if (body != null && accepted.await()) sendRequestBody(id, body)
@@ -170,6 +177,7 @@ public class BareRpc(
         state.withLock {
           pending.remove(id)
           requestAcks.remove(id)
+          requestPauses.remove(id)
         }
       }
     }
@@ -187,7 +195,10 @@ public class BareRpc(
       sendMessage {
         id = ++lastId
         replyBodies[id] = chunks
-        if (body != null) requestAcks[id] = accepted
+        if (body != null) {
+          requestAcks[id] = accepted
+          requestPauses[id] = MutableStateFlow(false)
+        }
         RequestMessage(id, command, if (body != null) STREAM_OPEN else 0u, data)
       }
       sendMessage { StreamMessage(id, STREAM_RESPONSE or STREAM_OPEN, null, null) }
@@ -200,14 +211,24 @@ public class BareRpc(
         state.withLock {
           replyBodies.remove(id)
           requestAcks.remove(id)
+          requestPauses.remove(id)
         }
       }
     }
   }
 
   private suspend fun sendRequestBody(id: ULong, body: Flow<ByteArray>) {
-    body.collect { sendMessage { StreamMessage(id, STREAM_REQUEST or STREAM_DATA, it, null) } }
+    val paused = state.withLock { requestPauses[id] }
+    body.collect {
+      paused?.awaitResume()
+      sendMessage { StreamMessage(id, STREAM_REQUEST or STREAM_DATA, it, null) }
+    }
+    paused?.awaitResume()
     sendMessage { StreamMessage(id, STREAM_REQUEST or STREAM_END, null, null) }
+  }
+
+  private suspend fun MutableStateFlow<Boolean>.awaitResume() {
+    first { !it }
   }
 
   private suspend fun sendMessage(message: () -> Message) {
@@ -254,6 +275,7 @@ public class BareRpc(
   private suspend fun fail(cause: Throwable) {
     val waiting: List<CompletableDeferred<*>>
     val bodies: List<Channel<ByteArray>>
+    val pauses: List<MutableStateFlow<Boolean>>
     state.withLock {
       if (failure != null) return
       failure = cause
@@ -265,9 +287,13 @@ public class BareRpc(
       requestBodies.clear()
       replyBodies.clear()
       replyAcks.clear()
+      pauses = requestPauses.values + replyPauses.values
+      requestPauses.clear()
+      replyPauses.clear()
       earlyReplyAcks.clear()
     }
     waiting.forEach { it.completeExceptionally(cause) }
+    pauses.forEach { it.value = false }
     bodies.forEach { it.close(cause) }
   }
 
@@ -329,7 +355,8 @@ public class BareRpc(
   private suspend fun onRequestStream(message: StreamMessage, event: ULong) {
     when {
       event == STREAM_OPEN -> state.withLock { requestAcks.remove(message.id) }?.complete(true)
-      event == STREAM_PAUSE || event == STREAM_RESUME -> Unit
+      event == STREAM_PAUSE || event == STREAM_RESUME ->
+        state.withLock { requestPauses[message.id] }?.value = event == STREAM_PAUSE
       event == STREAM_DATA -> state.withLock { requestBodies[message.id] }?.trySend(message.data!!)
       event == STREAM_END || event == STREAM_CLOSE && message.error == null ->
         state.withLock { requestBodies[message.id] }?.close()
@@ -341,7 +368,8 @@ public class BareRpc(
   private suspend fun onReplyStream(message: StreamMessage, event: ULong) {
     when {
       event == STREAM_OPEN -> acceptReply(message.id)
-      event == STREAM_PAUSE || event == STREAM_RESUME -> Unit
+      event == STREAM_PAUSE || event == STREAM_RESUME ->
+        state.withLock { replyPauses[message.id] }?.value = event == STREAM_PAUSE
       event == STREAM_DATA -> state.withLock { replyBodies[message.id] }?.trySend(message.data!!)
       event == STREAM_END || event == STREAM_CLOSE -> {
         val (chunks, accepted) =
@@ -390,18 +418,30 @@ public class BareRpc(
   private suspend fun streamReply(id: ULong, body: Flow<ByteArray>) {
     val scope = scope ?: return reply(id) { throw noScope() }
     val accepted = CompletableDeferred<Unit>()
+    val paused = MutableStateFlow(false)
     state.withLock {
       failure?.let { throw it }
       if (earlyReplyAcks.remove(id)) accepted.complete(Unit) else replyAcks[id] = accepted
+      replyPauses[id] = paused
     }
     respond(id, STREAM_OPEN, ResponseResult.Success(null))
-    launchStream(scope, { replyAcks.remove(id) }) {
+    launchStream(
+      scope,
+      {
+        replyAcks.remove(id)
+        replyPauses.remove(id)
+      },
+    ) {
       accepted.await()
       var error: Throwable? = null
       body
         .catch { error = it }
-        .collect { sendMessage { StreamMessage(id, STREAM_RESPONSE or STREAM_DATA, it, null) } }
+        .collect {
+          paused.awaitResume()
+          sendMessage { StreamMessage(id, STREAM_RESPONSE or STREAM_DATA, it, null) }
+        }
       val failed = error
+      paused.awaitResume()
       sendMessage {
         if (failed == null) StreamMessage(id, STREAM_RESPONSE or STREAM_END, null, null)
         else
