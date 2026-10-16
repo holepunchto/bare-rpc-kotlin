@@ -169,4 +169,33 @@ class IncomingRequestStreamTest {
     assertEquals(listOf(ack, pause, resume), sent)
     coroutineContext.cancelChildren()
   }
+
+  @Test
+  fun `close still hands over a paused body's buffered chunks`() = runTest {
+    val release = CompletableDeferred<Unit>()
+    var taken = 0
+    val rpc =
+      BareRpc(
+        send = {},
+        onRequest = {
+          try {
+            it.body!!.collect {
+              taken++
+              release.await()
+            }
+          } catch (e: ConnectionClosedException) {}
+          Reply.Data(ByteArray(0))
+        },
+        scope = this,
+      )
+    rpc.receive(open.hexToByteArray())
+    yield()
+    rpc.receive(data.hexToByteArray())
+    yield()
+    rpc.receive(big.hexToByteArray())
+    rpc.close()
+    release.complete(Unit)
+    yield()
+    assertEquals(2, taken)
+  }
 }

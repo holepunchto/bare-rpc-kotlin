@@ -494,12 +494,12 @@ public class BareRpc(
   }
 
   private suspend fun take(id: ULong, inbox: Inbox, data: ByteArray) {
-    signal(id, inbox, STREAM_RESUME) { inbox.take(data.size) }
+    signal(id, inbox, STREAM_RESUME) { inbox.remove(data.size) }
   }
 
-  private suspend fun signal(id: ULong, inbox: Inbox, event: ULong, due: () -> Boolean) {
+  private suspend fun signal(id: ULong, inbox: Inbox, event: ULong, crossesMark: () -> Boolean) {
     val queued = state.withLock {
-      val queued = failure == null && due()
+      val queued = failure == null && crossesMark()
       if (queued)
         outgoing.addLast(encode(frame, StreamMessage(id, inbox.mask or event, null, null)))
       queued
@@ -567,7 +567,7 @@ private class Inbox(val mask: ULong) {
     return true
   }
 
-  fun take(size: Int): Boolean {
+  fun remove(size: Int): Boolean {
     buffered -= size
     if (!paused || buffered >= HIGH_WATER_MARK) return false
     paused = false
