@@ -10,6 +10,10 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.yield
 
 class IncomingRequestStreamTest {
+  private val big =
+    "084000000301fd1001fd0040" + "00".repeat(16384) // stream id 1, request data, 16 KiB
+  private val pause = "050000000301fd0401" // stream id 1, request pause
+  private val resume = "050000000301fd0801" // stream id 1, request resume
   private val open = "0400000001010701" // request id 1, command 7, opens a stream
   private val ack = "050000000301fd0101" // stream id 1, request open
   private val data = "080000000301fd1001026869" // stream id 1, request data "hi"
@@ -118,5 +122,80 @@ class IncomingRequestStreamTest {
     yield()
     assertEquals(seen.await(), 0)
     coroutineContext.cancelChildren()
+  }
+
+  @Test
+  fun `a body that reaches the mark pauses the peer`() = runTest {
+    val release = CompletableDeferred<Unit>()
+    val sent = mutableListOf<String>()
+    val rpc =
+      BareRpc(
+        send = { sent += it.toHexString() },
+        onRequest = {
+          it.body!!.collect { release.await() }
+          Reply.Data(ByteArray(0))
+        },
+        scope = this,
+      )
+    rpc.receive(open.hexToByteArray())
+    yield()
+    rpc.receive(data.hexToByteArray())
+    yield()
+    rpc.receive(big.hexToByteArray())
+    assertEquals(listOf(ack, pause), sent)
+    coroutineContext.cancelChildren()
+  }
+
+  @Test
+  fun `a paused body resumes the peer once drained`() = runTest {
+    val release = CompletableDeferred<Unit>()
+    val sent = mutableListOf<String>()
+    val rpc =
+      BareRpc(
+        send = { sent += it.toHexString() },
+        onRequest = {
+          it.body!!.collect { release.await() }
+          Reply.Data(ByteArray(0))
+        },
+        scope = this,
+      )
+    rpc.receive(open.hexToByteArray())
+    yield()
+    rpc.receive(data.hexToByteArray())
+    yield()
+    rpc.receive(big.hexToByteArray())
+    release.complete(Unit)
+    yield()
+    assertEquals(listOf(ack, pause, resume), sent)
+    coroutineContext.cancelChildren()
+  }
+
+  @Test
+  fun `close still hands over a paused body's buffered chunks`() = runTest {
+    val release = CompletableDeferred<Unit>()
+    var taken = 0
+    val rpc =
+      BareRpc(
+        send = {},
+        onRequest = {
+          try {
+            it.body!!.collect {
+              taken++
+              release.await()
+            }
+          } catch (e: ConnectionClosedException) {}
+          Reply.Data(ByteArray(0))
+        },
+        scope = this,
+      )
+    rpc.receive(open.hexToByteArray())
+    yield()
+    rpc.receive(data.hexToByteArray())
+    yield()
+    rpc.receive(big.hexToByteArray())
+    rpc.close()
+    release.complete(Unit)
+    yield()
+    assertEquals(2, taken)
   }
 }

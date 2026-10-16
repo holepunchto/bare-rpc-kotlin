@@ -3,6 +3,7 @@ package to.holepunch.barerpc
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelChildren
@@ -16,6 +17,10 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.yield
 
 class RequestFlowTest {
+  private val big =
+    "084000000301fd1002fd0040" + "00".repeat(16384) // stream id 1, response data, 16 KiB
+  private val pause = "050000000301fd0402" // stream id 1, response pause
+  private val resume = "050000000301fd0802" // stream id 1, response resume
   private val request = "0700000001010700026869" // request id 1, command 7, "hi"
   private val ack = "050000000301fd0102" // stream id 1, response ack
   private val open = "0400000002010001" // response id 1, opens a stream
@@ -141,5 +146,37 @@ class RequestFlowTest {
     rpc.receive(end.hexToByteArray())
     assertEquals(emptyList(), chunks.await())
     assertEquals(listOf(requestOpen, ack), sent)
+  }
+
+  @Test
+  fun `a reply that reaches the mark pauses the peer`() = runTest {
+    val release = CompletableDeferred<Unit>()
+    val sent = mutableListOf<String>()
+    val rpc = BareRpc(send = { sent += it.toHexString() })
+    launch { rpc.requestFlow(7u, "hi".encodeToByteArray()).collect { release.await() } }
+    yield()
+    rpc.receive(open.hexToByteArray())
+    rpc.receive(data.hexToByteArray())
+    yield()
+    rpc.receive(big.hexToByteArray())
+    assertEquals(listOf(request, ack, pause), sent)
+    coroutineContext.cancelChildren()
+  }
+
+  @Test
+  fun `a paused reply resumes the peer once drained`() = runTest {
+    val release = CompletableDeferred<Unit>()
+    val sent = mutableListOf<String>()
+    val rpc = BareRpc(send = { sent += it.toHexString() })
+    launch { rpc.requestFlow(7u, "hi".encodeToByteArray()).collect { release.await() } }
+    yield()
+    rpc.receive(open.hexToByteArray())
+    rpc.receive(data.hexToByteArray())
+    yield()
+    rpc.receive(big.hexToByteArray())
+    release.complete(Unit)
+    yield()
+    assertEquals(listOf(request, ack, pause, resume), sent)
+    coroutineContext.cancelChildren()
   }
 }
