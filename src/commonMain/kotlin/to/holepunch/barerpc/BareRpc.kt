@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.consumeAsFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -50,8 +51,8 @@ public class BareRpc(
   private var lastId = 0uL
   private val pending = mutableMapOf<ULong, CompletableDeferred<ByteArray>>()
   private val requestAcks = mutableMapOf<ULong, CompletableDeferred<Boolean>>()
-  private val requestBodies = mutableMapOf<ULong, Channel<ByteArray>>()
-  private val replyBodies = mutableMapOf<ULong, Channel<ByteArray>>()
+  private val requestBodies = mutableMapOf<ULong, Inbox>()
+  private val replyBodies = mutableMapOf<ULong, Inbox>()
   private val replyAcks = mutableMapOf<ULong, CompletableDeferred<Unit>>()
   private val requestPauses = mutableMapOf<ULong, MutableStateFlow<Boolean>>()
   private val replyPauses = mutableMapOf<ULong, MutableStateFlow<Boolean>>()
@@ -191,14 +192,14 @@ public class BareRpc(
     data: ByteArray?,
     body: Flow<ByteArray>?,
   ): Flow<ByteArray> = flow {
-    val chunks = Channel<ByteArray>(Channel.UNLIMITED)
+    val inbox = Inbox(STREAM_RESPONSE)
     val accepted = CompletableDeferred<Boolean>()
     val paused = MutableStateFlow(false)
     var id = 0uL
     try {
       sendMessage {
         id = ++lastId
-        replyBodies[id] = chunks
+        replyBodies[id] = inbox
         if (body != null) {
           requestAcks[id] = accepted
           requestPauses[id] = paused
@@ -208,7 +209,10 @@ public class BareRpc(
       sendMessage { StreamMessage(id, STREAM_RESPONSE or STREAM_OPEN, null, null) }
       coroutineScope {
         val sender = body?.let { launch { if (accepted.await()) sendRequestBody(id, it, paused) } }
-        for (chunk in chunks) emit(chunk)
+        for (chunk in inbox.chunks) {
+          take(id, inbox, chunk)
+          emit(chunk)
+        }
         sender?.cancel()
       }
     } finally {
@@ -289,7 +293,7 @@ public class BareRpc(
       failure = cause
       outgoing.clear()
       waiting = pending.values + requestAcks.values + replyAcks.values
-      bodies = requestBodies.values + replyBodies.values
+      bodies = (requestBodies.values + replyBodies.values).map { it.chunks }
       pending.clear()
       requestAcks.clear()
       requestBodies.clear()
@@ -332,7 +336,7 @@ public class BareRpc(
         state.withLock {
           reply = pending.remove(message.id)
           accepted = requestAcks.remove(message.id)
-          chunks = replyBodies.remove(message.id)
+          chunks = replyBodies.remove(message.id)?.chunks
         }
         accepted?.complete(false)
         when (result) {
@@ -365,9 +369,12 @@ public class BareRpc(
       event == STREAM_OPEN -> state.withLock { requestAcks.remove(message.id) }?.complete(true)
       event == STREAM_PAUSE || event == STREAM_RESUME ->
         state.withLock { requestPauses[message.id] }?.value = event == STREAM_PAUSE
-      event == STREAM_DATA -> state.withLock { requestBodies[message.id] }?.trySend(message.data!!)
+      event == STREAM_DATA ->
+        state
+          .withLock { requestBodies[message.id] }
+          ?.let { deliver(message.id, it, message.data!!) }
       event == STREAM_END || event == STREAM_CLOSE && message.error == null ->
-        state.withLock { requestBodies[message.id] }?.close()
+        state.withLock { requestBodies[message.id] }?.chunks?.close()
       event == STREAM_DESTROY && message.error == null -> Unit
       else -> TODO("streams")
     }
@@ -378,10 +385,13 @@ public class BareRpc(
       event == STREAM_OPEN -> acceptReply(message.id)
       event == STREAM_PAUSE || event == STREAM_RESUME ->
         state.withLock { replyPauses[message.id] }?.value = event == STREAM_PAUSE
-      event == STREAM_DATA -> state.withLock { replyBodies[message.id] }?.trySend(message.data!!)
+      event == STREAM_DATA ->
+        state.withLock { replyBodies[message.id] }?.let { deliver(message.id, it, message.data!!) }
       event == STREAM_END || event == STREAM_CLOSE -> {
         val (chunks, accepted) =
-          state.withLock { replyBodies.remove(message.id) to requestAcks.remove(message.id) }
+          state.withLock {
+            replyBodies.remove(message.id)?.chunks to requestAcks.remove(message.id)
+          }
         accepted?.complete(false)
         chunks?.close(message.error?.let(::remoteException))
       }
@@ -395,15 +405,18 @@ public class BareRpc(
       return reply(request.id) { onRequest(IncomingRequest(request.command, request.data!!, null)) }
     }
     val scope = scope ?: return reply(request.id) { throw noScope() }
-    val chunks = Channel<ByteArray>(Channel.UNLIMITED)
+    val inbox = Inbox(STREAM_REQUEST)
     state.withLock {
       failure?.let { throw it }
-      requestBodies[request.id] = chunks
+      requestBodies[request.id] = inbox
     }
     val body =
-      chunks.consumeAsFlow().onStart {
-        sendMessage { StreamMessage(request.id, STREAM_REQUEST or STREAM_OPEN, null, null) }
-      }
+      inbox.chunks
+        .consumeAsFlow()
+        .onStart {
+          sendMessage { StreamMessage(request.id, STREAM_REQUEST or STREAM_OPEN, null, null) }
+        }
+        .onEach { take(request.id, inbox, it) }
     launchStream(scope, { requestBodies.remove(request.id) }) {
       reply(request.id) { onRequest(IncomingRequest(request.command, ByteArray(0), body)) }
     }
@@ -475,6 +488,33 @@ public class BareRpc(
       }
     }
 
+  private suspend fun deliver(id: ULong, inbox: Inbox, data: ByteArray) {
+    val pause = state.withLock {
+      inbox.buffered += data.size
+      val pause = !inbox.paused && inbox.buffered >= HIGH_WATER_MARK
+      if (pause) {
+        inbox.paused = true
+        outgoing.addLast(encode(frame, StreamMessage(id, inbox.mask or STREAM_PAUSE, null, null)))
+      }
+      pause
+    }
+    inbox.chunks.trySend(data)
+    if (pause) flush()
+  }
+
+  private suspend fun take(id: ULong, inbox: Inbox, data: ByteArray) {
+    val resume = state.withLock {
+      inbox.buffered -= data.size
+      val resume = inbox.paused && inbox.buffered < HIGH_WATER_MARK
+      if (resume) {
+        inbox.paused = false
+        outgoing.addLast(encode(frame, StreamMessage(id, inbox.mask or STREAM_RESUME, null, null)))
+      }
+      resume
+    }
+    if (resume) flush()
+  }
+
   private suspend fun acceptReply(id: ULong) {
     val accepted = state.withLock {
       val accepted = replyAcks.remove(id)
@@ -520,3 +560,11 @@ internal constructor(
  */
 public class IncomingEvent
 internal constructor(public val command: ULong, public val data: ByteArray)
+
+private const val HIGH_WATER_MARK = 16 * 1024
+
+private class Inbox(val mask: ULong) {
+  val chunks = Channel<ByteArray>(Channel.UNLIMITED)
+  var buffered = 0
+  var paused = false
+}
