@@ -5,6 +5,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.fold
@@ -114,6 +115,28 @@ class InteropTest {
     ) { rpc ->
       assertEquals("hi", rpc.request(9u, "hi".encodeToByteArray()).decodeToString())
       stopped.await()
+    }
+  }
+
+  @Test
+  fun `stopping a streamed reply early closes the JS peer's stream`() {
+    val closed = CompletableDeferred<Unit>()
+    withPeer(onEvent = { if (it.command == 10uL) closed.complete(Unit) }) { rpc ->
+      val chunk = rpc.requestFlow(10u, "hi".encodeToByteArray()).first()
+      assertEquals("hi", chunk.decodeToString())
+      closed.await()
+    }
+  }
+
+  @Test
+  fun `a handler that stops reading early closes the JS peer's stream`() {
+    val closed = CompletableDeferred<Unit>()
+    withPeer(
+      onRequest = { Reply.Data(it.body!!.first()) },
+      onEvent = { if (it.command == 11uL) closed.complete(Unit) },
+    ) { rpc ->
+      assertEquals("hi", rpc.request(11u, "hi".encodeToByteArray()).decodeToString())
+      closed.await()
     }
   }
 }

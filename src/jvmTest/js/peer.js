@@ -60,7 +60,27 @@ const rpc = new RPC(stream, async (request) => {
       for await (const chunk of response) return request.reply(chunk)
       return
     }
+    case 10: {
+      const response = request.createResponseStream()
+      response.on('close', () => rpc.event(10).send(request.data))
+      flood(response, request.data)
+      return
+    }
+    case 11: {
+      const call = rpc.request(7)
+      const body = call.createRequestStream()
+      body.on('close', () => rpc.event(11).send(request.data))
+      flood(body, request.data)
+      return request.reply(await call.reply())
+    }
     default:
       throw new Error(`Unknown command ${request.command}`)
   }
 })
+
+function flood(stream, data) {
+  const write = () => {
+    if (!stream.destroyed) stream.write(data, () => setImmediate(write))
+  }
+  write()
+}

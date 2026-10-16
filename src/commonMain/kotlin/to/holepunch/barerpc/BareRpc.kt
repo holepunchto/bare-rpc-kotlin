@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.consumeAsFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.job
@@ -225,9 +226,9 @@ public class BareRpc(
         sender?.cancel()
       }
     } finally {
+      stopReading(id, replyBodies)
       withContext(NonCancellable) {
         state.withLock {
-          replyBodies.remove(id)
           requestAcks.remove(id)
           requestPauses.remove(id)
           requestSenders.remove(id)
@@ -388,10 +389,10 @@ public class BareRpc(
         state
           .withLock { requestBodies[message.id] }
           ?.let { deliver(message.id, it, message.data!!) }
-      event == STREAM_END -> state.withLock { requestBodies[message.id] }?.chunks?.close()
+      event == STREAM_END -> state.withLock { requestBodies.remove(message.id) }?.chunks?.close()
       event == STREAM_CLOSE ->
         state
-          .withLock { requestBodies[message.id] }
+          .withLock { requestBodies.remove(message.id) }
           ?.chunks
           ?.close(message.error?.let(::remoteException))
       event == STREAM_DESTROY -> state.withLock { requestSenders.remove(message.id) }?.cancel()
@@ -434,7 +435,8 @@ public class BareRpc(
           sendMessage { StreamMessage(request.id, STREAM_REQUEST or STREAM_OPEN, null, null) }
         }
         .onEach { take(request.id, inbox, it) }
-    launchStream(scope, { requestBodies.remove(request.id) }) {
+        .onCompletion { stopReading(request.id, requestBodies) }
+    launchStream(scope, { stopReading(request.id, requestBodies) }) {
       reply(request.id) { onRequest(IncomingRequest(request.command, ByteArray(0), body)) }
     }
   }
@@ -466,9 +468,11 @@ public class BareRpc(
     launchStream(
       scope,
       {
-        replyAcks.remove(id)
-        replyPauses.remove(id)
-        replySenders.remove(id)
+        state.withLock {
+          replyAcks.remove(id)
+          replyPauses.remove(id)
+          replySenders.remove(id)
+        }
       },
     ) {
       state.withLock { replySenders[id] = currentCoroutineContext().job }
@@ -495,17 +499,20 @@ public class BareRpc(
     }
   }
 
-  private fun launchStream(scope: CoroutineScope, cleanup: () -> Unit, block: suspend () -> Unit) =
-    scope.launch {
-      try {
-        block()
-      } catch (e: Throwable) {
-        // Every error here is the connection's failure, which receive and request already throw.
-        if (e is CancellationException) currentCoroutineContext().ensureActive()
-      } finally {
-        withContext(NonCancellable) { state.withLock { cleanup() } }
-      }
+  private fun launchStream(
+    scope: CoroutineScope,
+    cleanup: suspend () -> Unit,
+    block: suspend () -> Unit,
+  ) = scope.launch {
+    try {
+      block()
+    } catch (e: Throwable) {
+      // Every error here is the connection's failure, which receive and request already throw.
+      if (e is CancellationException) currentCoroutineContext().ensureActive()
+    } finally {
+      withContext(NonCancellable) { cleanup() }
     }
+  }
 
   private suspend fun deliver(id: ULong, inbox: Inbox, data: ByteArray) {
     signal(id, inbox, STREAM_PAUSE) { inbox.add(data.size) }
@@ -515,6 +522,20 @@ public class BareRpc(
   private suspend fun take(id: ULong, inbox: Inbox, data: ByteArray) {
     signal(id, inbox, STREAM_RESUME) { inbox.remove(data.size) }
   }
+
+  private suspend fun stopReading(id: ULong, inboxes: MutableMap<ULong, Inbox>) =
+    withContext(NonCancellable) {
+      val queued = state.withLock {
+        val inbox = inboxes.remove(id)
+        val queued = inbox != null && failure == null
+        if (queued)
+          outgoing.addLast(
+            encode(frame, StreamMessage(id, inbox.mask or STREAM_DESTROY, null, null))
+          )
+        queued
+      }
+      if (queued) flush()
+    }
 
   private suspend fun signal(id: ULong, inbox: Inbox, event: ULong, crossesMark: () -> Boolean) {
     val queued = state.withLock {

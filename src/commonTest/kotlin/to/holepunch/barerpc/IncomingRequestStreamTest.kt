@@ -7,6 +7,7 @@ import kotlin.test.assertIs
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelChildren
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.fold
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.yield
@@ -24,6 +25,7 @@ class IncomingRequestStreamTest {
   private val noScope =
     "2f000000020101001c526571756573742073747265616d73206e65656420612073636f70650c4552525f4e4f5f53434f504500" // error id 1: "Request streams need a scope", "ERR_NO_SCOPE", errno 0
   private val close = "050000000301fd0201" // stream id 1, request close
+  private val destroy = "050000000301fd4001" // stream id 1, request destroy
   // stream id 1, request close error: "boom", "E_BOOM", errno 1
   private val closeError = "120000000301fd820104626f6f6d06455f424f4f4d02"
   private val boom =
@@ -272,5 +274,35 @@ class IncomingRequestStreamTest {
     rpc.receive(endError.hexToByteArray())
     yield()
     assertEquals(listOf(ack, empty), sent)
+  }
+
+  @Test
+  fun `a handler that stops reading early sends a destroy`() = runTest {
+    val sent = mutableListOf<String>()
+    val rpc =
+      BareRpc(
+        send = { sent += it.toHexString() },
+        onRequest = { Reply.Data(it.body!!.first()) },
+        scope = this,
+      )
+    rpc.receive(open.hexToByteArray())
+    yield()
+    rpc.receive(data.hexToByteArray())
+    yield()
+    assertEquals(listOf(ack, destroy, reply), sent)
+  }
+
+  @Test
+  fun `a handler that ignores the body sends a destroy`() = runTest {
+    val sent = mutableListOf<String>()
+    val rpc =
+      BareRpc(
+        send = { sent += it.toHexString() },
+        onRequest = { Reply.Data(ByteArray(0)) },
+        scope = this,
+      )
+    rpc.receive(open.hexToByteArray())
+    yield()
+    assertEquals(listOf(empty, destroy), sent)
   }
 }
