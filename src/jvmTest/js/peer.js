@@ -41,6 +41,18 @@ const rpc = new RPC(stream, async (request) => {
       for await (const chunk of response) chunks.push(chunk)
       return request.reply(Buffer.concat(chunks))
     }
+    case 7: {
+      const response = request.createResponseStream()
+      response.write(request.data)
+      response.end(request.data)
+      return
+    }
+    case 8: {
+      const response = request.createResponseStream()
+      for await (const chunk of request.createRequestStream()) response.write(chunk)
+      response.end()
+      return
+    }
     default:
       throw new Error(`Unknown command ${request.command}`)
   }

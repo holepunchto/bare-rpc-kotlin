@@ -28,8 +28,15 @@ internal constructor(message: String, cause: Throwable? = null) : RpcException(m
 public class RemoteException(message: String, public val code: String, public val errno: Long) :
   RpcException(message)
 
+/** The peer replied with a stream to a request that expected a single reply. */
+public class UnexpectedStreamException internal constructor() :
+  RpcException("The peer replied with a stream")
+
 /** The connection was closed by [BareRpc.close]. */
 public class ConnectionClosedException internal constructor() : RpcException("Connection closed")
+
+internal fun remoteException(error: RemoteError) =
+  RemoteException(error.message, error.code, error.errno)
 
 internal fun noScope() = RemoteException("Request streams need a scope", "ERR_NO_SCOPE", 0)
 
