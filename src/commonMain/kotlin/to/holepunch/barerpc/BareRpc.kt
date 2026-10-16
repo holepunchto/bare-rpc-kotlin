@@ -368,15 +368,8 @@ public class BareRpc(
       chunks.consumeAsFlow().onStart {
         sendMessage { StreamMessage(request.id, STREAM_REQUEST or STREAM_OPEN, null, null) }
       }
-    scope.launch {
-      try {
-        reply(request.id) { onRequest(IncomingRequest(request.command, ByteArray(0), body)) }
-      } catch (e: Throwable) {
-        // Every error here is the connection's failure, which receive and request already throw.
-        if (e is CancellationException) currentCoroutineContext().ensureActive()
-      } finally {
-        withContext(NonCancellable) { state.withLock { requestBodies.remove(request.id) } }
-      }
+    launchStream(scope, { requestBodies.remove(request.id) }) {
+      reply(request.id) { onRequest(IncomingRequest(request.command, ByteArray(0), body)) }
     }
   }
 
@@ -402,32 +395,37 @@ public class BareRpc(
       if (earlyReplyAcks.remove(id)) accepted.complete(Unit) else replyAcks[id] = accepted
     }
     respond(id, STREAM_OPEN, ResponseResult.Success(null))
+    launchStream(scope, { replyAcks.remove(id) }) {
+      accepted.await()
+      var error: Throwable? = null
+      body
+        .catch { error = it }
+        .collect { sendMessage { StreamMessage(id, STREAM_RESPONSE or STREAM_DATA, it, null) } }
+      val failed = error
+      sendMessage {
+        if (failed == null) StreamMessage(id, STREAM_RESPONSE or STREAM_END, null, null)
+        else
+          StreamMessage(
+            id,
+            STREAM_RESPONSE or STREAM_CLOSE or STREAM_ERROR,
+            null,
+            remoteError(failed),
+          )
+      }
+    }
+  }
+
+  private fun launchStream(scope: CoroutineScope, cleanup: () -> Unit, block: suspend () -> Unit) =
     scope.launch {
       try {
-        accepted.await()
-        var error: Throwable? = null
-        body
-          .catch { error = it }
-          .collect { sendMessage { StreamMessage(id, STREAM_RESPONSE or STREAM_DATA, it, null) } }
-        val failed = error
-        sendMessage {
-          if (failed == null) StreamMessage(id, STREAM_RESPONSE or STREAM_END, null, null)
-          else
-            StreamMessage(
-              id,
-              STREAM_RESPONSE or STREAM_CLOSE or STREAM_ERROR,
-              null,
-              remoteError(failed),
-            )
-        }
+        block()
       } catch (e: Throwable) {
         // Every error here is the connection's failure, which receive and request already throw.
         if (e is CancellationException) currentCoroutineContext().ensureActive()
       } finally {
-        withContext(NonCancellable) { state.withLock { replyAcks.remove(id) } }
+        withContext(NonCancellable) { state.withLock { cleanup() } }
       }
     }
-  }
 
   private suspend fun acceptReply(id: ULong) {
     val accepted = state.withLock {
