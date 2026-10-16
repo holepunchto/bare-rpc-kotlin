@@ -28,6 +28,8 @@ class RequestFlowTest {
   private val end = "050000000301fd2002" // stream id 1, response end
   // stream id 1, response close error: "boom", "E_BOOM", errno 1
   private val closeError = "120000000301fd820204626f6f6d06455f424f4f4d02"
+  // stream id 1, response end with an error: "boom", "E_BOOM", errno 1
+  private val endError = "120000000301fda00204626f6f6d06455f424f4f4d02"
   private val ok = "0700000002010000026f6b" // response id 1, "ok"
   private val requestOpen = "0400000001010701" // request id 1, command 7, opens a stream
   private val requestAck = "050000000301fd0101" // stream id 1, request open
@@ -189,5 +191,16 @@ class RequestFlowTest {
       rpc.receive(open.hexToByteArray())
       assertFailsWith<StreamOverflowException> { rpc.receive(data.hexToByteArray()) }
     }
+  }
+
+  @Test
+  fun `a stream ended with an error ends the flow`() = runTest {
+    val rpc = BareRpc(send = {})
+    val chunks = async { rpc.requestFlow(7u, "hi".encodeToByteArray()).toList() }
+    yield()
+    rpc.receive(open.hexToByteArray())
+    rpc.receive(data.hexToByteArray())
+    rpc.receive(endError.hexToByteArray())
+    assertEquals(listOf("hi"), chunks.await().map { it.decodeToString() })
   }
 }
