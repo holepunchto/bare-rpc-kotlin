@@ -179,4 +179,15 @@ class RequestFlowTest {
     assertEquals(listOf(request, ack, pause, resume), sent)
     coroutineContext.cancelChildren()
   }
+
+  @Test
+  fun `a reply stream past the cap fails the connection`() = runTest {
+    supervisorScope {
+      val rpc = BareRpc(send = {}, maxBufferedBytes = 1u)
+      async { rpc.requestFlow(7u, ByteArray(0)).first() }
+      yield()
+      rpc.receive(open.hexToByteArray())
+      assertFailsWith<BufferOverflowException> { rpc.receive(data.hexToByteArray()) }
+    }
+  }
 }

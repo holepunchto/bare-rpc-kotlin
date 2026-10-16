@@ -2,8 +2,10 @@ package to.holepunch.barerpc
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.flow.fold
 import kotlinx.coroutines.test.runTest
@@ -197,5 +199,37 @@ class IncomingRequestStreamTest {
     release.complete(Unit)
     yield()
     assertEquals(2, taken)
+  }
+
+  @Test
+  fun `a request stream past the cap fails the connection`() = runTest {
+    val rpc =
+      BareRpc(
+        send = {},
+        onRequest = { awaitCancellation() }, // never collects the body
+        maxBufferedBytes = 1u,
+        scope = this,
+      )
+    rpc.receive(open.hexToByteArray())
+    yield()
+    assertFailsWith<BufferOverflowException> {
+      rpc.receive(data.hexToByteArray())
+    } // "hi" is 2 bytes
+    coroutineContext.cancelChildren()
+  }
+
+  @Test
+  fun `a request stream up to the cap is kept`() = runTest {
+    val rpc =
+      BareRpc(
+        send = {},
+        onRequest = { awaitCancellation() },
+        maxBufferedBytes = 2u,
+        scope = this,
+      )
+    rpc.receive(open.hexToByteArray())
+    yield()
+    rpc.receive(data.hexToByteArray())
+    coroutineContext.cancelChildren()
   }
 }

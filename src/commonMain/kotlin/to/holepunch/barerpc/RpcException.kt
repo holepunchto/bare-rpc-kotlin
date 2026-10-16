@@ -32,6 +32,10 @@ public class RemoteException(message: String, public val code: String, public va
 public class UnexpectedStreamException internal constructor() :
   RpcException("The peer replied with a stream")
 
+/** The peer sent more of a stream than [BareRpc] buffers for it, past its pause. */
+public class BufferOverflowException internal constructor() :
+  RpcException("A stream buffered past its cap")
+
 /** The connection was closed by [BareRpc.close]. */
 public class ConnectionClosedException internal constructor() : RpcException("Connection closed")
 

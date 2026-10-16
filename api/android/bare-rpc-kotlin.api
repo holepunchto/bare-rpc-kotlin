@@ -1,6 +1,6 @@
 public final class to/holepunch/barerpc/BareRpc {
-	public synthetic fun <init> (Lkotlin/jvm/functions/Function2;Lkotlin/jvm/functions/Function2;Lkotlin/jvm/functions/Function2;ILkotlinx/coroutines/CoroutineScope;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
-	public synthetic fun <init> (Lkotlin/jvm/functions/Function2;Lkotlin/jvm/functions/Function2;Lkotlin/jvm/functions/Function2;ILkotlinx/coroutines/CoroutineScope;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Lkotlin/jvm/functions/Function2;Lkotlin/jvm/functions/Function2;Lkotlin/jvm/functions/Function2;IILkotlinx/coroutines/CoroutineScope;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Lkotlin/jvm/functions/Function2;Lkotlin/jvm/functions/Function2;Lkotlin/jvm/functions/Function2;IILkotlinx/coroutines/CoroutineScope;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun close (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun event-E0BElUM (J[BLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun receive ([BLkotlin/coroutines/Continuation;)Ljava/lang/Object;
@@ -8,6 +8,9 @@ public final class to/holepunch/barerpc/BareRpc {
 	public final fun request-E0BElUM (J[BLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun requestFlow-4PLdz1A (JLkotlinx/coroutines/flow/Flow;)Lkotlinx/coroutines/flow/Flow;
 	public final fun requestFlow-4PLdz1A (J[B)Lkotlinx/coroutines/flow/Flow;
+}
+
+public final class to/holepunch/barerpc/BufferOverflowException : to/holepunch/barerpc/RpcException {
 }
 
 public final class to/holepunch/barerpc/CommandRouter {
