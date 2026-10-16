@@ -377,8 +377,12 @@ public class BareRpc(
         state
           .withLock { requestBodies[message.id] }
           ?.let { deliver(message.id, it, message.data!!) }
-      event == STREAM_END || event == STREAM_CLOSE && message.error == null ->
-        state.withLock { requestBodies[message.id] }?.chunks?.close()
+      event == STREAM_END -> state.withLock { requestBodies[message.id] }?.chunks?.close()
+      event == STREAM_CLOSE ->
+        state
+          .withLock { requestBodies[message.id] }
+          ?.chunks
+          ?.close(message.error?.let(::remoteException))
       event == STREAM_DESTROY && message.error == null -> Unit
       else -> TODO("streams")
     }
