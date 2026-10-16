@@ -362,7 +362,7 @@ public class BareRpc(
         when {
           message.flags and STREAM_REQUEST != 0uL -> onRequestStream(message, event)
           message.flags and STREAM_RESPONSE != 0uL -> onReplyStream(message, event)
-          else -> TODO("streams")
+          else -> Unit
         }
       }
     }
