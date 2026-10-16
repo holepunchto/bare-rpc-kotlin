@@ -28,6 +28,7 @@ class RequestFlowTest {
   private val requestAck = "050000000301fd0101" // stream id 1, request open
   private val boom =
     "110000000201010004626f6f6d06455f424f4f4d02" // error id 1: "boom", "E_BOOM", errno 1
+  private val requestPause = "050000000301fd0401" // stream id 1, request pause
 
   @Test
   fun `collecting a request flow sends the request then the ack`() = runTest {
@@ -125,5 +126,20 @@ class RequestFlowTest {
       rpc.receive(boom.hexToByteArray())
       assertEquals("E_BOOM", assertFailsWith<RemoteException> { chunks.await() }.code)
     }
+  }
+
+  @Test
+  fun `a reply that ends stops a paused request body`() = runTest {
+    val sent = mutableListOf<String>()
+    val rpc = BareRpc(send = { sent += it.toHexString() })
+    val chunks = async { rpc.requestFlow(7u, flowOf("hi".encodeToByteArray())).toList() }
+    yield()
+    rpc.receive(requestAck.hexToByteArray())
+    rpc.receive(requestPause.hexToByteArray())
+    yield()
+    rpc.receive(open.hexToByteArray())
+    rpc.receive(end.hexToByteArray())
+    assertEquals(emptyList(), chunks.await())
+    assertEquals(listOf(requestOpen, ack), sent)
   }
 }
