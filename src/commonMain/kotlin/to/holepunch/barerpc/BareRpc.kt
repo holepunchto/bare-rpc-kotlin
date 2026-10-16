@@ -46,7 +46,7 @@ public class BareRpc(
   private val state = Mutex()
   private var lastId = 0uL
   private val pending = mutableMapOf<ULong, CompletableDeferred<ByteArray>>()
-  private val acks = mutableMapOf<ULong, CompletableDeferred<Boolean>>()
+  private val requestAcks = mutableMapOf<ULong, CompletableDeferred<Boolean>>()
   private val requestBodies = mutableMapOf<ULong, Channel<ByteArray>>()
   private val replyBodies = mutableMapOf<ULong, Channel<ByteArray>>()
   private val replyAcks = mutableMapOf<ULong, CompletableDeferred<Unit>>()
@@ -159,7 +159,7 @@ public class BareRpc(
       sendMessage {
         id = ++lastId
         pending[id] = reply
-        if (body != null) acks[id] = accepted
+        if (body != null) requestAcks[id] = accepted
         RequestMessage(id, command, if (body != null) STREAM_OPEN else 0u, data)
       }
       if (body != null && accepted.await()) sendRequestBody(id, body)
@@ -168,7 +168,7 @@ public class BareRpc(
       withContext(NonCancellable) {
         state.withLock {
           pending.remove(id)
-          acks.remove(id)
+          requestAcks.remove(id)
         }
       }
     }
@@ -186,7 +186,7 @@ public class BareRpc(
       sendMessage {
         id = ++lastId
         replyBodies[id] = chunks
-        if (body != null) acks[id] = accepted
+        if (body != null) requestAcks[id] = accepted
         RequestMessage(id, command, if (body != null) STREAM_OPEN else 0u, data)
       }
       sendMessage { StreamMessage(id, STREAM_RESPONSE or STREAM_OPEN, null, null) }
@@ -198,7 +198,7 @@ public class BareRpc(
       withContext(NonCancellable) {
         state.withLock {
           replyBodies.remove(id)
-          acks.remove(id)
+          requestAcks.remove(id)
         }
       }
     }
@@ -252,10 +252,10 @@ public class BareRpc(
       if (failure != null) return
       failure = cause
       outgoing.clear()
-      waiting = pending.values + acks.values + replyAcks.values
+      waiting = pending.values + requestAcks.values + replyAcks.values
       bodies = requestBodies.values + replyBodies.values
       pending.clear()
-      acks.clear()
+      requestAcks.clear()
       requestBodies.clear()
       replyBodies.clear()
       replyAcks.clear()
@@ -280,7 +280,7 @@ public class BareRpc(
           val (reply, accepted) =
             state.withLock {
               if (message.id in replyBodies) return
-              pending.remove(message.id) to acks.remove(message.id)
+              pending.remove(message.id) to requestAcks.remove(message.id)
             }
           accepted?.complete(false)
           reply?.completeExceptionally(UnexpectedStreamException())
@@ -291,7 +291,7 @@ public class BareRpc(
         val chunks: Channel<ByteArray>?
         state.withLock {
           reply = pending.remove(message.id)
-          accepted = acks.remove(message.id)
+          accepted = requestAcks.remove(message.id)
           chunks = replyBodies.remove(message.id)
         }
         accepted?.complete(false)
@@ -316,7 +316,7 @@ public class BareRpc(
         when {
           !request && !response -> TODO("streams")
           event == STREAM_OPEN && request ->
-            state.withLock { acks.remove(message.id) }?.complete(true)
+            state.withLock { requestAcks.remove(message.id) }?.complete(true)
           event == STREAM_OPEN -> acceptReply(message.id)
           event == STREAM_PAUSE || event == STREAM_RESUME -> Unit
           event == STREAM_DATA && request ->
@@ -327,7 +327,7 @@ public class BareRpc(
             state.withLock { replyBodies[message.id] }?.trySend(message.data!!)
           (event == STREAM_END || event == STREAM_CLOSE) && response -> {
             val (chunks, accepted) =
-              state.withLock { replyBodies.remove(message.id) to acks.remove(message.id) }
+              state.withLock { replyBodies.remove(message.id) to requestAcks.remove(message.id) }
             accepted?.complete(false)
             chunks?.close(message.error?.let(::remoteException))
           }
