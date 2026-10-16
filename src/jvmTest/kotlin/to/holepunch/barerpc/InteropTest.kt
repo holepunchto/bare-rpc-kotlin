@@ -3,9 +3,12 @@ package to.holepunch.barerpc
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.fold
+import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.flow.toList
 
 class InteropTest {
@@ -99,5 +102,18 @@ class InteropTest {
         it.decodeToString()
       },
     )
+  }
+
+  @Test
+  fun `a streamed reply stops when the JS peer stops reading`() {
+    val stopped = CompletableDeferred<Unit>()
+    withPeer(
+      onRequest = {
+        Reply.Stream(flow { while (true) emit(it.data) }.onCompletion { stopped.complete(Unit) })
+      }
+    ) { rpc ->
+      assertEquals("hi", rpc.request(9u, "hi".encodeToByteArray()).decodeToString())
+      stopped.await()
+    }
   }
 }
