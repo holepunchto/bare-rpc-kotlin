@@ -5,11 +5,13 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.consumeAsFlow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -46,6 +48,7 @@ public class BareRpc(
   private val pending = mutableMapOf<ULong, CompletableDeferred<ByteArray>>()
   private val acks = mutableMapOf<ULong, CompletableDeferred<Boolean>>()
   private val requestBodies = mutableMapOf<ULong, Channel<ByteArray>>()
+  private val replyBodies = mutableMapOf<ULong, Channel<ByteArray>>()
   private val replyAcks = mutableMapOf<ULong, CompletableDeferred<Unit>>()
   private val earlyReplyAcks = mutableSetOf<ULong>()
   private val outgoing = ArrayDeque<ByteArray>()
@@ -65,6 +68,7 @@ public class BareRpc(
    * Sends [data] to the peer as a request for [command] and returns the reply.
    *
    * @throws RemoteException if the peer replies with an error.
+   * @throws UnexpectedStreamException if the peer replies with a stream.
    * @throws Throwable the failure that closed the connection, a [ConnectionClosedException] after
    *   [close].
    */
@@ -77,11 +81,36 @@ public class BareRpc(
    * [body].
    *
    * @throws RemoteException if the peer replies with an error.
+   * @throws UnexpectedStreamException if the peer replies with a stream.
    * @throws Throwable the failure that closed the connection, a [ConnectionClosedException] after
    *   [close].
    */
   public suspend fun request(command: ULong, body: Flow<ByteArray>): ByteArray =
     sendRequest(command, null, body)
+
+  /**
+   * Sends [data] to the peer as a request for [command], and emits the reply: each chunk of a
+   * streamed reply, or a single reply as one chunk. Each collection sends a new request.
+   *
+   * @throws RemoteException if the peer replies or closes the stream with an error.
+   * @throws Throwable the failure that closed the connection, a [ConnectionClosedException] after
+   *   [close].
+   */
+  public fun requestFlow(command: ULong, data: ByteArray): Flow<ByteArray> =
+    replyFlow(command, data, null)
+
+  /**
+   * Sends a request for [command] whose payload is [body], streamed to the peer once it accepts the
+   * stream, and emits the reply while [body] is sent: each chunk of a streamed reply, or a single
+   * reply as one chunk. A single reply, or a streamed reply that ends, before the peer accepts the
+   * stream skips [body]. Each collection sends a new request.
+   *
+   * @throws RemoteException if the peer replies or closes the stream with an error.
+   * @throws Throwable the failure that closed the connection, a [ConnectionClosedException] after
+   *   [close].
+   */
+  public fun requestFlow(command: ULong, body: Flow<ByteArray>): Flow<ByteArray> =
+    replyFlow(command, null, body)
 
   /**
    * Reads [bytes] received from the peer, in arrival order, and delivers each whole frame. Calls
@@ -133,10 +162,7 @@ public class BareRpc(
         if (body != null) acks[id] = accepted
         RequestMessage(id, command, if (body != null) STREAM_OPEN else 0u, data)
       }
-      if (body != null && accepted.await()) {
-        body.collect { sendMessage { StreamMessage(id, STREAM_REQUEST or STREAM_DATA, it, null) } }
-        sendMessage { StreamMessage(id, STREAM_REQUEST or STREAM_END, null, null) }
-      }
+      if (body != null && accepted.await()) sendRequestBody(id, body)
       return reply.await()
     } finally {
       withContext(NonCancellable) {
@@ -146,6 +172,41 @@ public class BareRpc(
         }
       }
     }
+  }
+
+  private fun replyFlow(
+    command: ULong,
+    data: ByteArray?,
+    body: Flow<ByteArray>?,
+  ): Flow<ByteArray> = flow {
+    val chunks = Channel<ByteArray>(Channel.UNLIMITED)
+    val accepted = CompletableDeferred<Boolean>()
+    var id = 0uL
+    try {
+      sendMessage {
+        id = ++lastId
+        replyBodies[id] = chunks
+        if (body != null) acks[id] = accepted
+        RequestMessage(id, command, if (body != null) STREAM_OPEN else 0u, data)
+      }
+      sendMessage { StreamMessage(id, STREAM_RESPONSE or STREAM_OPEN, null, null) }
+      coroutineScope {
+        if (body != null) launch { if (accepted.await()) sendRequestBody(id, body) }
+        for (chunk in chunks) emit(chunk)
+      }
+    } finally {
+      withContext(NonCancellable) {
+        state.withLock {
+          replyBodies.remove(id)
+          acks.remove(id)
+        }
+      }
+    }
+  }
+
+  private suspend fun sendRequestBody(id: ULong, body: Flow<ByteArray>) {
+    body.collect { sendMessage { StreamMessage(id, STREAM_REQUEST or STREAM_DATA, it, null) } }
+    sendMessage { StreamMessage(id, STREAM_REQUEST or STREAM_END, null, null) }
   }
 
   private suspend fun sendMessage(message: () -> Message) {
@@ -192,10 +253,11 @@ public class BareRpc(
       failure = cause
       outgoing.clear()
       waiting = pending.values + acks.values + replyAcks.values
-      bodies = requestBodies.values.toList()
+      bodies = requestBodies.values + replyBodies.values
       pending.clear()
       acks.clear()
       requestBodies.clear()
+      replyBodies.clear()
       replyAcks.clear()
       earlyReplyAcks.clear()
     }
@@ -214,15 +276,36 @@ public class BareRpc(
         }
       is ResponseMessage -> {
         val result = message.result
-        if (result is ResponseResult.Success && message.stream != 0uL) TODO("response streams")
-        val (reply, accepted) =
-          state.withLock { pending.remove(message.id) to acks.remove(message.id) }
+        if (result is ResponseResult.Success && message.stream != 0uL) {
+          val (reply, accepted) =
+            state.withLock {
+              if (message.id in replyBodies) return
+              pending.remove(message.id) to acks.remove(message.id)
+            }
+          accepted?.complete(false)
+          reply?.completeExceptionally(UnexpectedStreamException())
+          return
+        }
+        val reply: CompletableDeferred<ByteArray>?
+        val accepted: CompletableDeferred<Boolean>?
+        val chunks: Channel<ByteArray>?
+        state.withLock {
+          reply = pending.remove(message.id)
+          accepted = acks.remove(message.id)
+          chunks = replyBodies.remove(message.id)
+        }
         accepted?.complete(false)
-        if (reply == null) return
         when (result) {
-          is RemoteError ->
-            reply.completeExceptionally(RemoteException(result.message, result.code, result.errno))
-          is ResponseResult.Success -> reply.complete(result.data!!)
+          is RemoteError -> {
+            val error = remoteException(result)
+            reply?.completeExceptionally(error)
+            chunks?.close(error)
+          }
+          is ResponseResult.Success -> {
+            reply?.complete(result.data!!)
+            chunks?.trySend(result.data!!)
+            chunks?.close()
+          }
         }
       }
       is StreamMessage -> {
@@ -240,6 +323,14 @@ public class BareRpc(
             state.withLock { requestBodies[message.id] }?.trySend(message.data!!)
           (event == STREAM_END || event == STREAM_CLOSE && message.error == null) && request ->
             state.withLock { requestBodies[message.id] }?.close()
+          event == STREAM_DATA && response ->
+            state.withLock { replyBodies[message.id] }?.trySend(message.data!!)
+          (event == STREAM_END || event == STREAM_CLOSE) && response -> {
+            val (chunks, accepted) =
+              state.withLock { replyBodies.remove(message.id) to acks.remove(message.id) }
+            accepted?.complete(false)
+            chunks?.close(message.error?.let(::remoteException))
+          }
           event == STREAM_DESTROY && message.error == null -> Unit
           else -> TODO("streams")
         }

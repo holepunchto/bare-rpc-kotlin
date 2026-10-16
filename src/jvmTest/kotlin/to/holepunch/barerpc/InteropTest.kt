@@ -6,6 +6,7 @@ import kotlin.test.assertFailsWith
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.fold
+import kotlinx.coroutines.flow.toList
 
 class InteropTest {
   @Test
@@ -78,4 +79,25 @@ class InteropTest {
     withPeer(onRequest = { Reply.Stream(flowOf(it.data, it.data)) }) { rpc ->
       assertEquals("hihi", rpc.request(6u, "hi".encodeToByteArray()).decodeToString())
     }
+
+  @Test
+  fun `a streamed reply from the JS peer is collected`() = withPeer { rpc ->
+    assertEquals(
+      "hihi",
+      rpc
+        .requestFlow(7u, "hi".encodeToByteArray())
+        .fold(ByteArray(0)) { a, b -> a + b }
+        .decodeToString(),
+    )
+  }
+
+  @Test
+  fun `a request stream echoed by the JS peer comes back as a stream`() = withPeer { rpc ->
+    assertEquals(
+      listOf("a", "b"),
+      rpc.requestFlow(8u, flowOf("a".encodeToByteArray(), "b".encodeToByteArray())).toList().map {
+        it.decodeToString()
+      },
+    )
+  }
 }
