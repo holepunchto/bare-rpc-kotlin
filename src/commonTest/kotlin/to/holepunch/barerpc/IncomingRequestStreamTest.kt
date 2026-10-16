@@ -298,7 +298,7 @@ class IncomingRequestStreamTest {
   }
 
   @Test
-  fun `a handler that ignores the body sends a destroy`() = runTest {
+  fun `a handler that ignores the body opens and destroys it`() = runTest {
     val sent = mutableListOf<String>()
     val rpc =
       BareRpc(
@@ -308,7 +308,7 @@ class IncomingRequestStreamTest {
       )
     rpc.receive(open.hexToByteArray())
     yield()
-    assertEquals(listOf(empty, destroy), sent)
+    assertEquals(listOf(empty, ack, destroy), sent)
   }
 
   @Test
@@ -330,7 +330,7 @@ class IncomingRequestStreamTest {
   }
 
   @Test
-  fun `a request stream on a cancelled scope runs no handler and sends a destroy`() = runTest {
+  fun `a request stream on a cancelled scope runs no handler and destroys the body`() = runTest {
     val sent = mutableListOf<String>()
     var ran = false
     val rpc =
@@ -344,7 +344,7 @@ class IncomingRequestStreamTest {
       )
     rpc.receive(open.hexToByteArray())
     yield()
-    assertEquals(listOf(destroy), sent)
+    assertEquals(listOf(ack, destroy), sent)
     assertFalse(ran)
   }
 

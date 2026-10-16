@@ -218,7 +218,10 @@ public class BareRpc(
         }
         RequestMessage(id, command, if (body != null) STREAM_OPEN else 0u, data)
       }
-      sendMessage { StreamMessage(id, STREAM_RESPONSE or STREAM_OPEN, null, null) }
+      sendMessage {
+        inbox.opened = true
+        StreamMessage(id, STREAM_RESPONSE or STREAM_OPEN, null, null)
+      }
       coroutineScope {
         val sender = body?.let { launch { sendRequestBody(id, it, accepted, paused) } }
         for (chunk in inbox.chunks) {
@@ -452,7 +455,10 @@ public class BareRpc(
       inbox.chunks
         .consumeAsFlow()
         .onStart {
-          sendMessage { StreamMessage(request.id, STREAM_REQUEST or STREAM_OPEN, null, null) }
+          sendMessage {
+            inbox.opened = true
+            StreamMessage(request.id, STREAM_REQUEST or STREAM_OPEN, null, null)
+          }
         }
         .onEach { take(request.id, inbox, it) }
         .onCompletion { stopReading(request.id, requestBodies) }
@@ -534,7 +540,13 @@ public class BareRpc(
 
   private suspend fun stopReading(id: ULong, inboxes: MutableMap<ULong, Inbox>) =
     withContext(NonCancellable) {
-      queueSignals(id) { listOfNotNull(inboxes.remove(id)?.let { it.mask or STREAM_DESTROY }) }
+      queueSignals(id) {
+        val inbox = inboxes.remove(id) ?: return@queueSignals emptyList()
+        listOfNotNull(
+          (inbox.mask or STREAM_OPEN).takeIf { !inbox.opened },
+          inbox.mask or STREAM_DESTROY,
+        )
+      }
     }
 
   private suspend fun queueSignals(id: ULong, flags: () -> List<ULong>) {
@@ -599,6 +611,7 @@ private val DEFAULT_MAX_BUFFERED_BYTES: UInt = 16u * 1024u * 1024u
 
 private class Inbox(val mask: ULong, private val maxBufferedBytes: UInt) {
   val chunks = Channel<ByteArray>(Channel.UNLIMITED)
+  var opened = false
   private var buffered = 0L
   private var paused = false
 

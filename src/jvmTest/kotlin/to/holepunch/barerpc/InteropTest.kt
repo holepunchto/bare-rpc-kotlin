@@ -139,4 +139,16 @@ class InteropTest {
       closed.await()
     }
   }
+
+  @Test
+  fun `a handler that ignores the body closes the JS peer's stream`() {
+    val closed = CompletableDeferred<Unit>()
+    withPeer(
+      onRequest = { Reply.Data(ByteArray(0)) },
+      onEvent = { if (it.command == 12uL) closed.complete(Unit) },
+    ) { rpc ->
+      assertEquals(0, rpc.request(12u, "hi".encodeToByteArray()).size)
+      closed.await()
+    }
+  }
 }

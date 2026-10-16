@@ -73,6 +73,13 @@ const rpc = new RPC(stream, async (request) => {
       flood(body, request.data)
       return request.reply(await call.reply())
     }
+    case 12: {
+      const call = rpc.request(7)
+      const body = call.createRequestStream()
+      body.on('close', () => rpc.event(12).send(request.data))
+      body.write(request.data)
+      return request.reply(await call.reply())
+    }
     default:
       throw new Error(`Unknown command ${request.command}`)
   }
