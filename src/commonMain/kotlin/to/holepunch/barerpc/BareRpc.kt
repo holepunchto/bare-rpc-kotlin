@@ -447,9 +447,14 @@ public class BareRpc(
 
   private suspend fun answer(request: RequestMessage) {
     if (request.stream == 0uL) {
-      return reply(request.id) { onRequest(IncomingRequest(request.command, request.data!!, null)) }
+      reply(request.id) { onRequest(IncomingRequest(request.command, request.data!!, null)) }
+      return
     }
-    val scope = scope ?: return reply(request.id) { throw noScope() }
+    val scope = scope
+    if (scope == null) {
+      reply(request.id) { throw noScope() }
+      return
+    }
     val inbox = Inbox(STREAM_REQUEST, maxBufferedBytes)
     state.withLock {
       failure?.let { throw it }
@@ -459,33 +464,38 @@ public class BareRpc(
       inbox.chunks
         .consumeAsFlow()
         .onStart {
-          sendMessage {
+          queueSignals(request.id) {
+            if (requestBodies[request.id] !== inbox) return@queueSignals emptyList()
             inbox.opened = true
-            StreamMessage(request.id, STREAM_REQUEST or STREAM_OPEN, null, null)
+            listOf(STREAM_REQUEST or STREAM_OPEN)
           }
         }
         .onEach { take(request.id, inbox, it) }
         .onCompletion { stopReading(request.id, requestBodies) }
     launchStream(scope, { stopReading(request.id, requestBodies) }) {
-      reply(request.id) { onRequest(IncomingRequest(request.command, ByteArray(0), body)) }
+      reply(request.id) { onRequest(IncomingRequest(request.command, ByteArray(0), body)) }?.join()
     }
   }
 
-  private suspend fun reply(id: ULong, handler: suspend () -> Reply) {
+  private suspend fun reply(id: ULong, handler: suspend () -> Reply): Job? {
     val reply =
       try {
         handler()
       } catch (e: Throwable) {
         if (e is CancellationException) currentCoroutineContext().ensureActive()
-        return respond(id, 0u, remoteError(e))
+        respond(id, 0u, remoteError(e))
+        return null
       }
-    when (reply) {
-      is Reply.Data -> respond(id, 0u, ResponseResult.Success(reply.data))
+    return when (reply) {
+      is Reply.Data -> {
+        respond(id, 0u, ResponseResult.Success(reply.data))
+        null
+      }
       is Reply.Stream -> streamReply(id, reply.body)
     }
   }
 
-  private suspend fun streamReply(id: ULong, body: Flow<ByteArray>) {
+  private suspend fun streamReply(id: ULong, body: Flow<ByteArray>): Job? {
     val scope = scope ?: return reply(id) { throw noScope() }
     val accepted = CompletableDeferred<Unit>()
     val paused = MutableStateFlow(false)
@@ -495,7 +505,7 @@ public class BareRpc(
       replyPauses[id] = paused
     }
     respond(id, STREAM_OPEN, ResponseResult.Success(null))
-    launchStream(
+    return launchStream(
       scope,
       {
         state.withLock {
@@ -547,6 +557,7 @@ public class BareRpc(
     withContext(NonCancellable) {
       queueSignals(id) {
         val inbox = inboxes.remove(id) ?: return@queueSignals emptyList()
+        inbox.chunks.close()
         listOfNotNull(
           (inbox.mask or STREAM_OPEN).takeIf { !inbox.opened },
           inbox.mask or STREAM_DESTROY,
@@ -592,8 +603,9 @@ public class BareRpc(
  * @property command the command the request names.
  * @property data the request's payload, empty when it streams a [body].
  * @property body the request's streamed payload, or null. Collecting it accepts the stream, and it
- *   can be collected once. Stopping before its end, or returning from [BareRpc]'s `onRequest`
- *   without collecting it to the end, tells the peer to stop sending.
+ *   can be collected once, until the reply is sent or a streamed reply ends; a later collection
+ *   ends empty. Stopping before its end, or not collecting it to the end in that time, tells a peer
+ *   that has started streaming to stop sending.
  */
 public class IncomingRequest
 internal constructor(

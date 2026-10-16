@@ -12,6 +12,8 @@ import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.fold
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.yield
 
@@ -29,6 +31,10 @@ class IncomingRequestStreamTest {
     "2f000000020101001c526571756573742073747265616d73206e65656420612073636f70650c4552525f4e4f5f53434f504500" // error id 1: "Request streams need a scope", "ERR_NO_SCOPE", errno 0
   private val close = "050000000301fd0201" // stream id 1, request close
   private val destroy = "050000000301fd4001" // stream id 1, request destroy
+  private val replyOpen = "0400000002010001" // response id 1, opens a stream
+  private val replyAck = "050000000301fd0102" // stream id 1, response open
+  private val replyData = "080000000301fd1002026869" // stream id 1, response data "hi"
+  private val replyEnd = "050000000301fd2002" // stream id 1, response end
   // stream id 1, request data with an error: "boom", "E_BOOM", errno 1
   private val dataError = "120000000301fd900104626f6f6d06455f424f4f4d02"
   // stream id 1, request close error: "boom", "E_BOOM", errno 1
@@ -362,5 +368,43 @@ class IncomingRequestStreamTest {
     rpc.receive(dataError.hexToByteArray())
     yield()
     assertEquals(listOf(ack, empty), sent)
+  }
+
+  @Test
+  fun `a body streamed back as the reply is read to its end`() = runTest {
+    val sent = mutableListOf<String>()
+    val rpc =
+      BareRpc(
+        send = { sent += it.toHexString() },
+        onRequest = { Reply.Stream(it.body!!) },
+        scope = this,
+      )
+    rpc.receive(open.hexToByteArray())
+    yield()
+    rpc.receive(replyAck.hexToByteArray())
+    yield()
+    rpc.receive(data.hexToByteArray())
+    rpc.receive(end.hexToByteArray())
+    yield()
+    assertEquals(listOf(replyOpen, ack, replyData, replyEnd), sent)
+  }
+
+  @Test
+  fun `a body read after the handler returns ends empty`() = runTest {
+    val sent = mutableListOf<String>()
+    val late = CompletableDeferred<List<ByteArray>>()
+    val rpc =
+      BareRpc(
+        send = { sent += it.toHexString() },
+        onRequest = { request ->
+          launch { late.complete(request.body!!.toList()) }
+          Reply.Data(ByteArray(0))
+        },
+        scope = this,
+      )
+    rpc.receive(open.hexToByteArray())
+    yield()
+    assertEquals(emptyList(), late.await())
+    assertEquals(listOf(empty, ack, destroy), sent)
   }
 }

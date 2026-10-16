@@ -151,4 +151,10 @@ class InteropTest {
       closed.await()
     }
   }
+
+  @Test
+  fun `a request stream from the JS peer is streamed back as the reply`() =
+    withPeer(onRequest = { Reply.Stream(it.body!!) }) { rpc ->
+      assertEquals("hi", rpc.request(13u, "hi".encodeToByteArray()).decodeToString())
+    }
 }
