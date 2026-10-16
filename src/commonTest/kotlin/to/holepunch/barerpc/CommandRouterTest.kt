@@ -18,7 +18,7 @@ class CommandRouterTest {
     val sent = mutableListOf<String>()
     val router = CommandRouter()
     router.onRequest(7u) { error("wrong command") }
-    router.onRequest(8u) { "ok".encodeToByteArray() }
+    router.onRequest(8u) { Reply.Data("ok".encodeToByteArray()) }
     BareRpc(send = { sent += it.toHexString() }, onRequest = router::dispatch)
       .receive(eight.hexToByteArray())
     assertEquals(listOf(ok), sent)
@@ -28,7 +28,7 @@ class CommandRouterTest {
   fun `a request for no registered command is rejected as unknown`() = runTest {
     val sent = mutableListOf<String>()
     val router = CommandRouter()
-    router.onRequest(8u) { "ok".encodeToByteArray() }
+    router.onRequest(8u) { Reply.Data("ok".encodeToByteArray()) }
     BareRpc(send = { sent += it.toHexString() }, onRequest = router::dispatch)
       .receive(seven.hexToByteArray())
     assertEquals(listOf(unknownSeven), sent)

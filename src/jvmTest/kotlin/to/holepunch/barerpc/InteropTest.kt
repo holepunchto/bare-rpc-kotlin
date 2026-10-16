@@ -21,8 +21,9 @@ class InteropTest {
 
   @Test
   fun `a request from the JS peer reaches the Kotlin handler`() =
-    withPeer(onRequest = { "${it.command}:${it.data.decodeToString()}".encodeToByteArray() }) { rpc
-      ->
+    withPeer(
+      onRequest = { Reply.Data("${it.command}:${it.data.decodeToString()}".encodeToByteArray()) }
+    ) { rpc ->
       assertEquals("7:hi", rpc.request(2u, "hi".encodeToByteArray()).decodeToString())
     }
 
@@ -68,7 +69,13 @@ class InteropTest {
 
   @Test
   fun `a request stream from the JS peer reaches the Kotlin handler`() =
-    withPeer(onRequest = { it.body!!.fold(ByteArray(0)) { a, b -> a + b } }) { rpc ->
+    withPeer(onRequest = { Reply.Data(it.body!!.fold(ByteArray(0)) { a, b -> a + b }) }) { rpc ->
       assertEquals("hi", rpc.request(5u, "hi".encodeToByteArray()).decodeToString())
+    }
+
+  @Test
+  fun `a streamed reply reaches the JS peer`() =
+    withPeer(onRequest = { Reply.Stream(flowOf(it.data, it.data)) }) { rpc ->
+      assertEquals("hihi", rpc.request(6u, "hi".encodeToByteArray()).decodeToString())
     }
 }

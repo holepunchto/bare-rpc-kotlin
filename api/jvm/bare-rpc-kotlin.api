@@ -39,6 +39,19 @@ public final class to/holepunch/barerpc/RemoteException : to/holepunch/barerpc/R
 	public final fun getErrno ()J
 }
 
+public abstract interface class to/holepunch/barerpc/Reply {
+}
+
+public final class to/holepunch/barerpc/Reply$Data : to/holepunch/barerpc/Reply {
+	public fun <init> ([B)V
+	public final fun getData ()[B
+}
+
+public final class to/holepunch/barerpc/Reply$Stream : to/holepunch/barerpc/Reply {
+	public fun <init> (Lkotlinx/coroutines/flow/Flow;)V
+	public final fun getBody ()Lkotlinx/coroutines/flow/Flow;
+}
+
 public abstract class to/holepunch/barerpc/RpcException : java/lang/Exception {
 	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/Throwable;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 }

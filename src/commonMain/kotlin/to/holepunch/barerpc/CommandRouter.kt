@@ -6,11 +6,11 @@ package to.holepunch.barerpc
  * [BareRpc.receive].
  */
 public class CommandRouter {
-  private val requestHandlers = mutableMapOf<ULong, suspend (IncomingRequest) -> ByteArray>()
+  private val requestHandlers = mutableMapOf<ULong, suspend (IncomingRequest) -> Reply>()
   private val eventHandlers = mutableMapOf<ULong, suspend (IncomingEvent) -> Unit>()
 
   /** Answers requests for [command] with [handler], in place of any handler registered before. */
-  public fun onRequest(command: ULong, handler: suspend (IncomingRequest) -> ByteArray) {
+  public fun onRequest(command: ULong, handler: suspend (IncomingRequest) -> Reply) {
     requestHandlers[command] = handler
   }
 
@@ -24,7 +24,7 @@ public class CommandRouter {
    *
    * @throws RemoteException with code `ERR_UNKNOWN_COMMAND` if no handler is registered for it.
    */
-  public suspend fun dispatch(request: IncomingRequest): ByteArray {
+  public suspend fun dispatch(request: IncomingRequest): Reply {
     val handler = requestHandlers[request.command] ?: throw unknownCommand(request.command)
     return handler(request)
   }

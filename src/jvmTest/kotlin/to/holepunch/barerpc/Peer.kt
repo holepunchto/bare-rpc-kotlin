@@ -12,7 +12,7 @@ import kotlinx.coroutines.withTimeout
 private val peerScript = System.getProperty("bare-rpc.peer")
 
 internal fun withPeer(
-  onRequest: (suspend (IncomingRequest) -> ByteArray)? = null,
+  onRequest: (suspend (IncomingRequest) -> Reply)? = null,
   onEvent: suspend (IncomingEvent) -> Unit = {},
   block: suspend (BareRpc) -> Unit,
 ): Unit = runBlocking {

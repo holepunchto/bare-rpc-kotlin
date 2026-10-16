@@ -30,7 +30,7 @@ class IncomingRequestTest {
         send = { sent += it.toHexString() },
         onRequest = {
           seen += it.command to it.data.decodeToString()
-          "ok".encodeToByteArray()
+          Reply.Data("ok".encodeToByteArray())
         },
       )
     rpc.receive(hi.hexToByteArray())
@@ -98,7 +98,7 @@ class IncomingRequestTest {
             gate.await()
           } else sent += it.toHexString()
         },
-        onRequest = { "ok".encodeToByteArray() },
+        onRequest = { Reply.Data("ok".encodeToByteArray()) },
       )
     launch { rpc.request(7u, ByteArray(0)) }
     yield()

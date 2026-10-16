@@ -27,7 +27,7 @@ class IncomingRequestStreamTest {
         send = { sent += it.toHexString() },
         onRequest = {
           it.body!!.collect {}
-          ByteArray(0)
+          Reply.Data(ByteArray(0))
         },
         scope = this,
       )
@@ -43,7 +43,7 @@ class IncomingRequestStreamTest {
     val rpc =
       BareRpc(
         send = { sent += it.toHexString() },
-        onRequest = { it.body!!.fold(ByteArray(0)) { a, b -> a + b } },
+        onRequest = { Reply.Data(it.body!!.fold(ByteArray(0)) { a, b -> a + b }) },
         scope = this,
       )
     rpc.receive(open.hexToByteArray())
@@ -68,7 +68,7 @@ class IncomingRequestStreamTest {
     val rpc =
       BareRpc(
         send = { sent += it.toHexString() },
-        onRequest = { it.body!!.fold(ByteArray(0)) { a, b -> a + b } },
+        onRequest = { Reply.Data(it.body!!.fold(ByteArray(0)) { a, b -> a + b }) },
         scope = this,
       )
     rpc.receive(open.hexToByteArray())
@@ -91,7 +91,7 @@ class IncomingRequestStreamTest {
           } catch (e: Throwable) {
             caught.complete(e)
           }
-          ByteArray(0)
+          Reply.Data(ByteArray(0))
         },
         scope = this,
       )
@@ -110,7 +110,7 @@ class IncomingRequestStreamTest {
         onRequest = {
           seen.complete(it.data.size)
           it.body!!.collect {}
-          ByteArray(0)
+          Reply.Data(ByteArray(0))
         },
         scope = this,
       )
