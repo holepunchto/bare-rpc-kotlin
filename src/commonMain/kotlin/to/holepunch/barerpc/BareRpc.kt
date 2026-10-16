@@ -245,12 +245,29 @@ public class BareRpc(
   ) {
     state.withLock { requestSenders[id] = currentCoroutineContext().job }
     if (!accepted.await()) return
-    body.collect {
-      paused.awaitResume()
-      sendMessage { StreamMessage(id, STREAM_REQUEST or STREAM_DATA, it, null) }
-    }
+    sendBody(id, STREAM_REQUEST, body, paused)?.let { throw it }
+  }
+
+  private suspend fun sendBody(
+    id: ULong,
+    mask: ULong,
+    body: Flow<ByteArray>,
+    paused: MutableStateFlow<Boolean>,
+  ): Throwable? {
+    var error: Throwable? = null
+    body
+      .catch { error = it }
+      .collect {
+        paused.awaitResume()
+        sendMessage { StreamMessage(id, mask or STREAM_DATA, it, null) }
+      }
+    val failed = error
     paused.awaitResume()
-    sendMessage { StreamMessage(id, STREAM_REQUEST or STREAM_END, null, null) }
+    sendMessage {
+      if (failed == null) StreamMessage(id, mask or STREAM_END, null, null)
+      else StreamMessage(id, mask or STREAM_CLOSE or STREAM_ERROR, null, remoteError(failed))
+    }
+    return failed
   }
 
   private suspend fun MutableStateFlow<Boolean>.awaitResume() {
@@ -477,25 +494,7 @@ public class BareRpc(
     ) {
       state.withLock { replySenders[id] = currentCoroutineContext().job }
       accepted.await()
-      var error: Throwable? = null
-      body
-        .catch { error = it }
-        .collect {
-          paused.awaitResume()
-          sendMessage { StreamMessage(id, STREAM_RESPONSE or STREAM_DATA, it, null) }
-        }
-      val failed = error
-      paused.awaitResume()
-      sendMessage {
-        if (failed == null) StreamMessage(id, STREAM_RESPONSE or STREAM_END, null, null)
-        else
-          StreamMessage(
-            id,
-            STREAM_RESPONSE or STREAM_CLOSE or STREAM_ERROR,
-            null,
-            remoteError(failed),
-          )
-      }
+      sendBody(id, STREAM_RESPONSE, body, paused)
     }
   }
 
