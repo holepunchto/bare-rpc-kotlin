@@ -28,6 +28,9 @@ class IncomingRequestStreamTest {
   private val closeError = "120000000301fd820104626f6f6d06455f424f4f4d02"
   private val boom =
     "110000000201010004626f6f6d06455f424f4f4d02" // error id 1: "boom", "E_BOOM", errno 1
+  // stream id 1, request end with an error: "boom", "E_BOOM", errno 1
+  private val endError = "120000000301fda00104626f6f6d06455f424f4f4d02"
+  private val empty = "050000000201000000" // response id 1, empty
 
   @Test
   fun `collecting a request stream sends the ack`() = runTest {
@@ -253,5 +256,21 @@ class IncomingRequestStreamTest {
     rpc.receive(closeError.hexToByteArray())
     yield()
     assertEquals(listOf(ack, boom), sent)
+  }
+
+  @Test
+  fun `an end with an error ends the body`() = runTest {
+    val sent = mutableListOf<String>()
+    val rpc =
+      BareRpc(
+        send = { sent += it.toHexString() },
+        onRequest = { Reply.Data(it.body!!.fold(ByteArray(0)) { a, b -> a + b }) },
+        scope = this,
+      )
+    rpc.receive(open.hexToByteArray())
+    yield()
+    rpc.receive(endError.hexToByteArray())
+    yield()
+    assertEquals(listOf(ack, empty), sent)
   }
 }

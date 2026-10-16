@@ -377,7 +377,8 @@ public class BareRpc(
         state
           .withLock { requestBodies[message.id] }
           ?.let { deliver(message.id, it, message.data!!) }
-      event == STREAM_END || event == STREAM_CLOSE ->
+      event == STREAM_END -> state.withLock { requestBodies[message.id] }?.chunks?.close()
+      event == STREAM_CLOSE ->
         state
           .withLock { requestBodies[message.id] }
           ?.chunks
