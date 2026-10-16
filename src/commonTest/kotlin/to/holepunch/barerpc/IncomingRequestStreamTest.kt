@@ -29,6 +29,8 @@ class IncomingRequestStreamTest {
     "2f000000020101001c526571756573742073747265616d73206e65656420612073636f70650c4552525f4e4f5f53434f504500" // error id 1: "Request streams need a scope", "ERR_NO_SCOPE", errno 0
   private val close = "050000000301fd0201" // stream id 1, request close
   private val destroy = "050000000301fd4001" // stream id 1, request destroy
+  // stream id 1, request data with an error: "boom", "E_BOOM", errno 1
+  private val dataError = "120000000301fd900104626f6f6d06455f424f4f4d02"
   // stream id 1, request close error: "boom", "E_BOOM", errno 1
   private val closeError = "120000000301fd820104626f6f6d06455f424f4f4d02"
   private val boom =
@@ -344,5 +346,21 @@ class IncomingRequestStreamTest {
     yield()
     assertEquals(listOf(destroy), sent)
     assertFalse(ran)
+  }
+
+  @Test
+  fun `a data frame with an error ends the body`() = runTest {
+    val sent = mutableListOf<String>()
+    val rpc =
+      BareRpc(
+        send = { sent += it.toHexString() },
+        onRequest = { Reply.Data(it.body!!.fold(ByteArray(0)) { a, b -> a + b }) },
+        scope = this,
+      )
+    rpc.receive(open.hexToByteArray())
+    yield()
+    rpc.receive(dataError.hexToByteArray())
+    yield()
+    assertEquals(listOf(ack, empty), sent)
   }
 }

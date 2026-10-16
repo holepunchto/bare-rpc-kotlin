@@ -389,7 +389,8 @@ public class BareRpc(
       }
       is StreamMessage -> {
         if (message.id == 0uL) return
-        val event = streamEvents.firstOrNull { message.flags and it != 0uL } ?: return
+        val first = streamEvents.firstOrNull { message.flags and it != 0uL } ?: return
+        val event = if (first == STREAM_DATA && message.data == null) STREAM_END else first
         when {
           message.flags and STREAM_REQUEST != 0uL -> onRequestStream(message, event)
           message.flags and STREAM_RESPONSE != 0uL -> onReplyStream(message, event)
