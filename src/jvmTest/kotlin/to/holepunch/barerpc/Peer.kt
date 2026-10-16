@@ -26,7 +26,9 @@ internal fun withPeer(
       input.flush()
     }
   }
-  val rpc = if (onRequest == null) BareRpc(send, onEvent) else BareRpc(send, onEvent, onRequest)
+  val rpc =
+    if (onRequest == null) BareRpc(send, onEvent, scope = this)
+    else BareRpc(send, onEvent, onRequest, scope = this)
   launch(Dispatchers.IO) {
     val buffer = ByteArray(64 * 1024)
     while (true) {
