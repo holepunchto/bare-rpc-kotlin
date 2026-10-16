@@ -34,6 +34,9 @@ import to.holepunch.compactencoding.encode
  *   exception it throws goes back as an error, a [RemoteException] as itself. By default every
  *   request is rejected as an unknown command. A [Reply.Stream] streams from [scope].
  * @param maxFrameSize the longest frame [receive] accepts, length prefix included.
+ * @param maxBufferedBytes the most of one stream's data held for its collector. A peer that sends
+ *   past it fails the connection with a [StreamOverflowException]. Below the 16 KiB pause mark, the
+ *   peer is never paused first.
  * @param scope runs the handlers of requests that stream a body, and streams each [Reply.Stream],
  *   since both need later [receive] calls. Without a scope the peer gets an error instead, after
  *   the handler has run for a [Reply.Stream].
@@ -43,6 +46,7 @@ public class BareRpc(
   private val onEvent: suspend (IncomingEvent) -> Unit = {},
   private val onRequest: suspend (IncomingRequest) -> Reply = { throw unknownCommand(it.command) },
   maxFrameSize: UInt = DEFAULT_MAX_FRAME_SIZE,
+  private val maxBufferedBytes: UInt = DEFAULT_MAX_BUFFERED_BYTES,
   private val scope: CoroutineScope? = null,
 ) {
   private val splitter = FrameSplitter(maxFrameSize)
@@ -192,7 +196,7 @@ public class BareRpc(
     data: ByteArray?,
     body: Flow<ByteArray>?,
   ): Flow<ByteArray> = flow {
-    val inbox = Inbox(STREAM_RESPONSE)
+    val inbox = Inbox(STREAM_RESPONSE, maxBufferedBytes)
     val accepted = CompletableDeferred<Boolean>()
     val paused = MutableStateFlow(false)
     var id = 0uL
@@ -405,7 +409,7 @@ public class BareRpc(
       return reply(request.id) { onRequest(IncomingRequest(request.command, request.data!!, null)) }
     }
     val scope = scope ?: return reply(request.id) { throw noScope() }
-    val inbox = Inbox(STREAM_REQUEST)
+    val inbox = Inbox(STREAM_REQUEST, maxBufferedBytes)
     state.withLock {
       failure?.let { throw it }
       requestBodies[request.id] = inbox
@@ -555,12 +559,15 @@ internal constructor(public val command: ULong, public val data: ByteArray)
 
 private const val HIGH_WATER_MARK = 16 * 1024
 
-private class Inbox(val mask: ULong) {
+private val DEFAULT_MAX_BUFFERED_BYTES: UInt = 16u * 1024u * 1024u
+
+private class Inbox(val mask: ULong, private val maxBufferedBytes: UInt) {
   val chunks = Channel<ByteArray>(Channel.UNLIMITED)
-  private var buffered = 0
+  private var buffered = 0L
   private var paused = false
 
   fun add(size: Int): Boolean {
+    if (buffered + size > maxBufferedBytes.toLong()) throw StreamOverflowException()
     buffered += size
     if (paused || buffered < HIGH_WATER_MARK) return false
     paused = true

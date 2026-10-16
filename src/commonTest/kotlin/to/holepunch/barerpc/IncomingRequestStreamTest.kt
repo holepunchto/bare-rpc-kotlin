@@ -2,8 +2,10 @@ package to.holepunch.barerpc
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.flow.fold
 import kotlinx.coroutines.test.runTest
@@ -197,5 +199,39 @@ class IncomingRequestStreamTest {
     release.complete(Unit)
     yield()
     assertEquals(2, taken)
+  }
+
+  @Test
+  fun `a request stream past the cap fails the connection`() = runTest {
+    val rpc =
+      BareRpc(
+        send = {},
+        onRequest = { awaitCancellation() },
+        maxBufferedBytes = 1u,
+        scope = this,
+      )
+    rpc.receive(open.hexToByteArray())
+    yield()
+    assertFailsWith<StreamOverflowException> { rpc.receive(data.hexToByteArray()) }
+    assertFailsWith<StreamOverflowException> { rpc.receive(end.hexToByteArray()) }
+    coroutineContext.cancelChildren()
+  }
+
+  @Test
+  fun `a request stream up to the cap is kept`() = runTest {
+    val sent = mutableListOf<String>()
+    val rpc =
+      BareRpc(
+        send = { sent += it.toHexString() },
+        onRequest = { Reply.Data(it.body!!.fold(ByteArray(0)) { a, b -> a + b }) },
+        maxBufferedBytes = 2u,
+        scope = this,
+      )
+    rpc.receive(open.hexToByteArray())
+    yield()
+    rpc.receive(data.hexToByteArray())
+    rpc.receive(end.hexToByteArray())
+    yield()
+    assertEquals(listOf(ack, reply), sent)
   }
 }
