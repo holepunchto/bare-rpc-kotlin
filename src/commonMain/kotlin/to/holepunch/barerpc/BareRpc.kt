@@ -489,30 +489,22 @@ public class BareRpc(
     }
 
   private suspend fun deliver(id: ULong, inbox: Inbox, data: ByteArray) {
-    val pause = state.withLock {
-      inbox.buffered += data.size
-      val pause = !inbox.paused && inbox.buffered >= HIGH_WATER_MARK
-      if (pause) {
-        inbox.paused = true
-        outgoing.addLast(encode(frame, StreamMessage(id, inbox.mask or STREAM_PAUSE, null, null)))
-      }
-      pause
-    }
+    signal(id, inbox, STREAM_PAUSE) { inbox.add(data.size) }
     inbox.chunks.trySend(data)
-    if (pause) flush()
   }
 
   private suspend fun take(id: ULong, inbox: Inbox, data: ByteArray) {
-    val resume = state.withLock {
-      inbox.buffered -= data.size
-      val resume = inbox.paused && inbox.buffered < HIGH_WATER_MARK
-      if (resume) {
-        inbox.paused = false
-        outgoing.addLast(encode(frame, StreamMessage(id, inbox.mask or STREAM_RESUME, null, null)))
-      }
-      resume
+    signal(id, inbox, STREAM_RESUME) { inbox.take(data.size) }
+  }
+
+  private suspend fun signal(id: ULong, inbox: Inbox, event: ULong, due: () -> Boolean) {
+    val queued = state.withLock {
+      val queued = failure == null && due()
+      if (queued)
+        outgoing.addLast(encode(frame, StreamMessage(id, inbox.mask or event, null, null)))
+      queued
     }
-    if (resume) flush()
+    if (queued) flush()
   }
 
   private suspend fun acceptReply(id: ULong) {
@@ -565,6 +557,20 @@ private const val HIGH_WATER_MARK = 16 * 1024
 
 private class Inbox(val mask: ULong) {
   val chunks = Channel<ByteArray>(Channel.UNLIMITED)
-  var buffered = 0
-  var paused = false
+  private var buffered = 0
+  private var paused = false
+
+  fun add(size: Int): Boolean {
+    buffered += size
+    if (paused || buffered < HIGH_WATER_MARK) return false
+    paused = true
+    return true
+  }
+
+  fun take(size: Int): Boolean {
+    buffered -= size
+    if (!paused || buffered >= HIGH_WATER_MARK) return false
+    paused = false
+    return true
+  }
 }
