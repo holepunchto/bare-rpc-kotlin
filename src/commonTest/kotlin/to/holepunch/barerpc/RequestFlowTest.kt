@@ -27,6 +27,7 @@ class RequestFlowTest {
   private val data = "080000000301fd1002026869" // stream id 1, response data "hi"
   private val end = "050000000301fd2002" // stream id 1, response end
   private val destroy = "050000000301fd4002" // stream id 1, response destroy
+  private val close = "050000000301fd0202" // stream id 1, response close
   // stream id 1, response close error: "boom", "E_BOOM", errno 1
   private val closeError = "120000000301fd820204626f6f6d06455f424f4f4d02"
   // stream id 1, response end with an error: "boom", "E_BOOM", errno 1
@@ -217,5 +218,19 @@ class RequestFlowTest {
     rpc.receive(data.hexToByteArray())
     assertEquals("hi", chunk.await().decodeToString())
     assertEquals(listOf(request, ack, destroy), sent)
+  }
+
+  @Test
+  fun `a close after the end is ignored`() = runTest {
+    val sent = mutableListOf<String>()
+    val rpc = BareRpc(send = { sent += it.toHexString() })
+    val chunks = async { rpc.requestFlow(7u, "hi".encodeToByteArray()).toList() }
+    yield()
+    rpc.receive(open.hexToByteArray())
+    rpc.receive(data.hexToByteArray())
+    rpc.receive(end.hexToByteArray())
+    rpc.receive(close.hexToByteArray())
+    assertEquals(listOf("hi"), chunks.await().map { it.decodeToString() })
+    assertEquals(listOf(request, ack), sent)
   }
 }

@@ -305,4 +305,22 @@ class IncomingRequestStreamTest {
     yield()
     assertEquals(listOf(empty, destroy), sent)
   }
+
+  @Test
+  fun `a close after the end is ignored`() = runTest {
+    val sent = mutableListOf<String>()
+    val rpc =
+      BareRpc(
+        send = { sent += it.toHexString() },
+        onRequest = { Reply.Data(it.body!!.fold(ByteArray(0)) { a, b -> a + b }) },
+        scope = this,
+      )
+    rpc.receive(open.hexToByteArray())
+    yield()
+    rpc.receive(data.hexToByteArray())
+    rpc.receive(end.hexToByteArray())
+    rpc.receive(close.hexToByteArray())
+    yield()
+    assertEquals(listOf(ack, reply), sent)
+  }
 }
