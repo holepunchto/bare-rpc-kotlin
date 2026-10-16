@@ -90,8 +90,9 @@ internal const val STREAM_RESUME = 0x8uL
 internal const val STREAM_DATA = 0x10uL
 internal const val STREAM_END = 0x20uL
 internal const val STREAM_DESTROY = 0x40uL
-private const val STREAM_ERROR = 0x80uL
+internal const val STREAM_ERROR = 0x80uL
 internal const val STREAM_REQUEST = 0x100uL
+internal const val STREAM_RESPONSE = 0x200uL
 
 internal val streamEvents =
   listOf(

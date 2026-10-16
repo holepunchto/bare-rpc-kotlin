@@ -8,6 +8,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.consumeAsFlow
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.launch
@@ -25,17 +26,16 @@ import to.holepunch.compactencoding.encode
  * @param onEvent receives each event the peer sends.
  * @param onRequest answers each request the peer sends: its return value is the reply, and an
  *   exception it throws goes back as an error, a [RemoteException] as itself. By default every
- *   request is rejected as an unknown command.
+ *   request is rejected as an unknown command. A [Reply.Stream] streams from [scope].
  * @param maxFrameSize the longest frame [receive] accepts, length prefix included.
- * @param scope runs the handlers of requests that stream a body, which need later [receive] calls
- *   to read it. Without a scope such requests are rejected.
+ * @param scope runs the handlers of requests that stream a body, and streams each [Reply.Stream],
+ *   since both need later [receive] calls. Without a scope the peer gets an error instead, after
+ *   the handler has run for a [Reply.Stream].
  */
 public class BareRpc(
   private val send: suspend (ByteArray) -> Unit,
   private val onEvent: suspend (IncomingEvent) -> Unit = {},
-  private val onRequest: suspend (IncomingRequest) -> ByteArray = {
-    throw unknownCommand(it.command)
-  },
+  private val onRequest: suspend (IncomingRequest) -> Reply = { throw unknownCommand(it.command) },
   maxFrameSize: UInt = DEFAULT_MAX_FRAME_SIZE,
   private val scope: CoroutineScope? = null,
 ) {
@@ -46,6 +46,8 @@ public class BareRpc(
   private val pending = mutableMapOf<ULong, CompletableDeferred<ByteArray>>()
   private val acks = mutableMapOf<ULong, CompletableDeferred<Boolean>>()
   private val requestBodies = mutableMapOf<ULong, Channel<ByteArray>>()
+  private val replyAcks = mutableMapOf<ULong, CompletableDeferred<Unit>>()
+  private val earlyReplyAcks = mutableSetOf<ULong>()
   private val outgoing = ArrayDeque<ByteArray>()
   private var failure: Throwable? = null
 
@@ -189,11 +191,13 @@ public class BareRpc(
       if (failure != null) return
       failure = cause
       outgoing.clear()
-      waiting = pending.values + acks.values
+      waiting = pending.values + acks.values + replyAcks.values
       bodies = requestBodies.values.toList()
       pending.clear()
       acks.clear()
       requestBodies.clear()
+      replyAcks.clear()
+      earlyReplyAcks.clear()
     }
     waiting.forEach { it.completeExceptionally(cause) }
     bodies.forEach { it.close(cause) }
@@ -224,13 +228,17 @@ public class BareRpc(
       is StreamMessage -> {
         if (message.id == 0uL) return
         val event = streamEvents.firstOrNull { message.flags and it != 0uL } ?: return
+        val request = message.flags and STREAM_REQUEST != 0uL
+        val response = message.flags and STREAM_RESPONSE != 0uL
         when {
-          message.flags and STREAM_REQUEST == 0uL -> TODO("streams")
-          event == STREAM_OPEN -> state.withLock { acks.remove(message.id) }?.complete(true)
+          !request && !response -> TODO("streams")
+          event == STREAM_OPEN && request ->
+            state.withLock { acks.remove(message.id) }?.complete(true)
+          event == STREAM_OPEN -> acceptReply(message.id)
           event == STREAM_PAUSE || event == STREAM_RESUME -> Unit
-          event == STREAM_DATA ->
+          event == STREAM_DATA && request ->
             state.withLock { requestBodies[message.id] }?.trySend(message.data!!)
-          event == STREAM_END || event == STREAM_CLOSE && message.error == null ->
+          (event == STREAM_END || event == STREAM_CLOSE && message.error == null) && request ->
             state.withLock { requestBodies[message.id] }?.close()
           event == STREAM_DESTROY && message.error == null -> Unit
           else -> TODO("streams")
@@ -265,19 +273,75 @@ public class BareRpc(
     }
   }
 
-  private suspend fun reply(id: ULong, handler: suspend () -> ByteArray) {
-    val result =
+  private suspend fun reply(id: ULong, handler: suspend () -> Reply) {
+    val reply =
       try {
-        ResponseResult.Success(handler())
-      } catch (e: RemoteException) {
-        RemoteError(e.message.orEmpty(), e.code, e.errno)
+        handler()
       } catch (e: Throwable) {
         if (e is CancellationException) currentCoroutineContext().ensureActive()
-        RemoteError(e.message.orEmpty(), "", 0)
+        return respond(id, 0u, remoteError(e))
       }
-    state.withLock { outgoing.addLast(encode(frame, ResponseMessage(id, 0u, result))) }
+    when (reply) {
+      is Reply.Data -> respond(id, 0u, ResponseResult.Success(reply.data))
+      is Reply.Stream -> streamReply(id, reply.body)
+    }
+  }
+
+  private suspend fun streamReply(id: ULong, body: Flow<ByteArray>) {
+    val scope = scope ?: return reply(id) { throw noScope() }
+    val accepted = CompletableDeferred<Unit>()
+    state.withLock {
+      failure?.let { throw it }
+      if (earlyReplyAcks.remove(id)) accepted.complete(Unit) else replyAcks[id] = accepted
+    }
+    respond(id, STREAM_OPEN, ResponseResult.Success(null))
+    scope.launch {
+      try {
+        accepted.await()
+        var error: Throwable? = null
+        body
+          .catch { error = it }
+          .collect { sendMessage { StreamMessage(id, STREAM_RESPONSE or STREAM_DATA, it, null) } }
+        val failed = error
+        sendMessage {
+          if (failed == null) StreamMessage(id, STREAM_RESPONSE or STREAM_END, null, null)
+          else
+            StreamMessage(
+              id,
+              STREAM_RESPONSE or STREAM_CLOSE or STREAM_ERROR,
+              null,
+              remoteError(failed),
+            )
+        }
+      } catch (e: Throwable) {
+        // Every error here is the connection's failure, which receive and request already throw.
+        if (e is CancellationException) currentCoroutineContext().ensureActive()
+      } finally {
+        withContext(NonCancellable) { state.withLock { replyAcks.remove(id) } }
+      }
+    }
+  }
+
+  private suspend fun acceptReply(id: ULong) {
+    val accepted = state.withLock {
+      val accepted = replyAcks.remove(id)
+      if (accepted == null) earlyReplyAcks += id
+      accepted
+    }
+    accepted?.complete(Unit)
+  }
+
+  private suspend fun respond(id: ULong, stream: ULong, result: ResponseResult) {
+    state.withLock {
+      if (stream == 0uL) earlyReplyAcks.remove(id)
+      outgoing.addLast(encode(frame, ResponseMessage(id, stream, result)))
+    }
     flush()
   }
+
+  private fun remoteError(e: Throwable) =
+    if (e is RemoteException) RemoteError(e.message.orEmpty(), e.code, e.errno)
+    else RemoteError(e.message.orEmpty(), "", 0)
 }
 
 /**
