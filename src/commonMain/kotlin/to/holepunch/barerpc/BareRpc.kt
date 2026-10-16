@@ -24,7 +24,8 @@ import to.holepunch.compactencoding.encode
  * One end of a bare-rpc connection.
  *
  * @param send writes one encoded frame to the peer, whole or not at all. A failure closes the
- *   connection.
+ *   connection. It is not cancelled once called, even when the caller that queued the frame is,
+ *   since frames queued by other callers wait behind it.
  * @param onEvent receives each event the peer sends.
  * @param onRequest answers each request the peer sends: its return value is the reply, and an
  *   exception it throws goes back as an error, a [RemoteException] as itself. By default every
@@ -219,18 +220,23 @@ public class BareRpc(
   }
 
   private suspend fun drain() {
+    withContext(NonCancellable) { sendQueued() }?.let { throw it }
+  }
+
+  private suspend fun sendQueued(): Throwable? {
     while (true) {
       val next =
         state.withLock {
-          failure?.let { throw it }
+          failure?.let {
+            return it
+          }
           outgoing.removeFirstOrNull()
-        } ?: return
+        } ?: return null
       try {
         send(next)
       } catch (e: Throwable) {
-        if (e is CancellationException) currentCoroutineContext().ensureActive()
         fail(e)
-        throw e
+        return e
       }
     }
   }
