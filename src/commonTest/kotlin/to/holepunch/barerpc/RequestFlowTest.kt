@@ -53,14 +53,24 @@ class RequestFlowTest {
 
   @Test
   fun `a streamed reply is emitted until its end`() = runTest {
-    val sent = mutableListOf<String>()
-    val rpc = BareRpc(send = { sent += it.toHexString() })
+    val rpc = BareRpc(send = {})
     val chunks = async { rpc.requestFlow(7u, "hi".encodeToByteArray()).toList() }
     yield()
     rpc.receive(open.hexToByteArray())
     rpc.receive(data.hexToByteArray())
     rpc.receive(end.hexToByteArray())
     assertEquals(listOf("hi"), chunks.await().map { it.decodeToString() })
+  }
+
+  @Test
+  fun `a reply flow that ends sends no destroy`() = runTest {
+    val sent = mutableListOf<String>()
+    val rpc = BareRpc(send = { sent += it.toHexString() })
+    val chunks = async { rpc.requestFlow(7u, "hi".encodeToByteArray()).toList() }
+    yield()
+    rpc.receive(open.hexToByteArray())
+    rpc.receive(end.hexToByteArray())
+    chunks.await()
     assertEquals(listOf(request, ack), sent)
   }
 
@@ -237,7 +247,7 @@ class RequestFlowTest {
   }
 
   @Test
-  fun `a data frame with an error ends the flow`() = runTest {
+  fun `a data frame without data ends the flow`() = runTest {
     val rpc = BareRpc(send = {})
     val chunks = async { rpc.requestFlow(7u, "hi".encodeToByteArray()).toList() }
     yield()

@@ -349,7 +349,7 @@ class IncomingRequestStreamTest {
   }
 
   @Test
-  fun `a data frame with an error ends the body`() = runTest {
+  fun `a data frame without data ends the body`() = runTest {
     val sent = mutableListOf<String>()
     val rpc =
       BareRpc(
