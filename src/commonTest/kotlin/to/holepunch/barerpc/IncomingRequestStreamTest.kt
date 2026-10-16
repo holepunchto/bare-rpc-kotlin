@@ -336,12 +336,11 @@ class IncomingRequestStreamTest {
   }
 
   @Test
-  fun `a request stream on a cancelled scope runs no handler and destroys the body`() = runTest {
-    val sent = mutableListOf<String>()
+  fun `a request stream on a cancelled scope runs no handler`() = runTest {
     var ran = false
     val rpc =
       BareRpc(
-        send = { sent += it.toHexString() },
+        send = {},
         onRequest = {
           ran = true
           Reply.Data(ByteArray(0))
@@ -350,12 +349,24 @@ class IncomingRequestStreamTest {
       )
     rpc.receive(open.hexToByteArray())
     yield()
-    assertEquals(listOf(ack, destroy), sent)
     assertFalse(ran)
   }
 
   @Test
-  fun `a data frame without data ends the body`() = runTest {
+  fun `a request stream on a cancelled scope destroys the body`() = runTest {
+    val sent = mutableListOf<String>()
+    val rpc =
+      BareRpc(
+        send = { sent += it.toHexString() },
+        scope = CoroutineScope(coroutineContext + Job().apply { cancel() }),
+      )
+    rpc.receive(open.hexToByteArray())
+    yield()
+    assertEquals(listOf(ack, destroy), sent)
+  }
+
+  @Test
+  fun `a data frame without data ends the body cleanly`() = runTest {
     val sent = mutableListOf<String>()
     val rpc =
       BareRpc(

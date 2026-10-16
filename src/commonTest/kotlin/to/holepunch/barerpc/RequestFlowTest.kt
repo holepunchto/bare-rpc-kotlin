@@ -249,7 +249,7 @@ class RequestFlowTest {
   }
 
   @Test
-  fun `a data frame without data ends the flow`() = runTest {
+  fun `a data frame without data ends the flow cleanly`() = runTest {
     val rpc = BareRpc(send = {})
     val chunks = async { rpc.requestFlow(7u, "hi".encodeToByteArray()).toList() }
     yield()

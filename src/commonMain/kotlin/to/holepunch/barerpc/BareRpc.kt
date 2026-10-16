@@ -541,15 +541,13 @@ public class BareRpc(
     }
 
   private suspend fun deliver(id: ULong, inbox: Inbox, data: ByteArray) {
-    queueSignals(id) {
-      if (inbox.add(data.size)) listOf(inbox.mask or STREAM_PAUSE) else emptyList()
-    }
+    queueSignals(id) { listOfNotNull((inbox.mask or STREAM_PAUSE).takeIf { inbox.add(data.size) }) }
     inbox.chunks.trySend(data)
   }
 
   private suspend fun take(id: ULong, inbox: Inbox, data: ByteArray) {
     queueSignals(id) {
-      if (inbox.remove(data.size)) listOf(inbox.mask or STREAM_RESUME) else emptyList()
+      listOfNotNull((inbox.mask or STREAM_RESUME).takeIf { inbox.remove(data.size) })
     }
   }
 
@@ -565,12 +563,12 @@ public class BareRpc(
       }
     }
 
-  private suspend fun queueSignals(id: ULong, flags: () -> List<ULong>) {
+  private suspend fun queueSignals(id: ULong, signals: () -> List<ULong>) {
     val queued = state.withLock {
       if (failure != null) return@withLock false
-      val signals = flags()
-      for (flag in signals) outgoing.addLast(encode(frame, StreamMessage(id, flag, null, null)))
-      signals.isNotEmpty()
+      val flags = signals()
+      for (flag in flags) outgoing.addLast(encode(frame, StreamMessage(id, flag, null, null)))
+      flags.isNotEmpty()
     }
     if (queued) flush()
   }
