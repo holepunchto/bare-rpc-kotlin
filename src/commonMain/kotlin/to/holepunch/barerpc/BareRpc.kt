@@ -317,30 +317,40 @@ public class BareRpc(
       is StreamMessage -> {
         if (message.id == 0uL) return
         val event = streamEvents.firstOrNull { message.flags and it != 0uL } ?: return
-        val request = message.flags and STREAM_REQUEST != 0uL
-        val response = message.flags and STREAM_RESPONSE != 0uL
         when {
-          !request && !response -> TODO("streams")
-          event == STREAM_OPEN && request ->
-            state.withLock { requestAcks.remove(message.id) }?.complete(true)
-          event == STREAM_OPEN -> acceptReply(message.id)
-          event == STREAM_PAUSE || event == STREAM_RESUME -> Unit
-          event == STREAM_DATA && request ->
-            state.withLock { requestBodies[message.id] }?.trySend(message.data!!)
-          (event == STREAM_END || event == STREAM_CLOSE && message.error == null) && request ->
-            state.withLock { requestBodies[message.id] }?.close()
-          event == STREAM_DATA && response ->
-            state.withLock { replyBodies[message.id] }?.trySend(message.data!!)
-          (event == STREAM_END || event == STREAM_CLOSE) && response -> {
-            val (chunks, accepted) =
-              state.withLock { replyBodies.remove(message.id) to requestAcks.remove(message.id) }
-            accepted?.complete(false)
-            chunks?.close(message.error?.let(::remoteException))
-          }
-          event == STREAM_DESTROY && message.error == null -> Unit
+          message.flags and STREAM_REQUEST != 0uL -> onRequestStream(message, event)
+          message.flags and STREAM_RESPONSE != 0uL -> onReplyStream(message, event)
           else -> TODO("streams")
         }
       }
+    }
+  }
+
+  private suspend fun onRequestStream(message: StreamMessage, event: ULong) {
+    when {
+      event == STREAM_OPEN -> state.withLock { requestAcks.remove(message.id) }?.complete(true)
+      event == STREAM_PAUSE || event == STREAM_RESUME -> Unit
+      event == STREAM_DATA -> state.withLock { requestBodies[message.id] }?.trySend(message.data!!)
+      event == STREAM_END || event == STREAM_CLOSE && message.error == null ->
+        state.withLock { requestBodies[message.id] }?.close()
+      event == STREAM_DESTROY && message.error == null -> Unit
+      else -> TODO("streams")
+    }
+  }
+
+  private suspend fun onReplyStream(message: StreamMessage, event: ULong) {
+    when {
+      event == STREAM_OPEN -> acceptReply(message.id)
+      event == STREAM_PAUSE || event == STREAM_RESUME -> Unit
+      event == STREAM_DATA -> state.withLock { replyBodies[message.id] }?.trySend(message.data!!)
+      event == STREAM_END || event == STREAM_CLOSE -> {
+        val (chunks, accepted) =
+          state.withLock { replyBodies.remove(message.id) to requestAcks.remove(message.id) }
+        accepted?.complete(false)
+        chunks?.close(message.error?.let(::remoteException))
+      }
+      event == STREAM_DESTROY && message.error == null -> Unit
+      else -> TODO("streams")
     }
   }
 
