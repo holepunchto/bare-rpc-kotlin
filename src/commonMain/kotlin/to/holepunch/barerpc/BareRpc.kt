@@ -95,7 +95,8 @@ public class BareRpc(
   /**
    * Sends a request for [command] whose payload is [body], streamed to the peer once it accepts the
    * stream, and returns the reply. Sending [body] stops once the reply comes, which skips it if the
-   * peer has not accepted the stream yet.
+   * peer has not accepted the stream yet, or once the peer stops reading it. If [body] throws, the
+   * stream is closed with the error and this call throws it.
    *
    * @throws RemoteException if the peer replies with an error.
    * @throws UnexpectedStreamException if the peer replies with a stream.
@@ -107,7 +108,8 @@ public class BareRpc(
 
   /**
    * Sends [data] to the peer as a request for [command], and emits the reply: each chunk of a
-   * streamed reply, or a single reply as one chunk. Each collection sends a new request.
+   * streamed reply, or a single reply as one chunk. Each collection sends a new request, and
+   * stopping it before a streamed reply ends tells the peer to stop sending.
    *
    * @throws RemoteException if the peer replies or closes the stream with an error.
    * @throws Throwable the failure that closed the connection, a [ConnectionClosedException] after
@@ -119,8 +121,10 @@ public class BareRpc(
   /**
    * Sends a request for [command] whose payload is [body], streamed to the peer once it accepts the
    * stream, and emits the reply while [body] is sent: each chunk of a streamed reply, or a single
-   * reply as one chunk. Sending [body] stops once a single reply comes or a streamed reply ends.
-   * Each collection sends a new request.
+   * reply as one chunk. Sending [body] stops once a single reply comes, a streamed reply ends, or
+   * the peer stops reading it. If [body] throws, the stream is closed with the error and the flow
+   * throws it. Each collection sends a new request, and stopping it before a streamed reply ends
+   * tells the peer to stop sending.
    *
    * @throws RemoteException if the peer replies or closes the stream with an error.
    * @throws Throwable the failure that closed the connection, a [ConnectionClosedException] after
@@ -587,7 +591,8 @@ public class BareRpc(
  * @property command the command the request names.
  * @property data the request's payload, empty when it streams a [body].
  * @property body the request's streamed payload, or null. Collecting it accepts the stream, and it
- *   can be collected once.
+ *   can be collected once. Stopping before its end, or returning from [BareRpc]'s `onRequest`
+ *   without collecting it to the end, tells the peer to stop sending.
  */
 public class IncomingRequest
 internal constructor(
