@@ -206,30 +206,32 @@ class IncomingRequestStreamTest {
     val rpc =
       BareRpc(
         send = {},
-        onRequest = { awaitCancellation() }, // never collects the body
+        onRequest = { awaitCancellation() },
         maxBufferedBytes = 1u,
         scope = this,
       )
     rpc.receive(open.hexToByteArray())
     yield()
-    assertFailsWith<BufferOverflowException> {
-      rpc.receive(data.hexToByteArray())
-    } // "hi" is 2 bytes
+    assertFailsWith<StreamOverflowException> { rpc.receive(data.hexToByteArray()) }
+    assertFailsWith<StreamOverflowException> { rpc.receive(end.hexToByteArray()) }
     coroutineContext.cancelChildren()
   }
 
   @Test
   fun `a request stream up to the cap is kept`() = runTest {
+    val sent = mutableListOf<String>()
     val rpc =
       BareRpc(
-        send = {},
-        onRequest = { awaitCancellation() },
+        send = { sent += it.toHexString() },
+        onRequest = { Reply.Data(it.body!!.fold(ByteArray(0)) { a, b -> a + b }) },
         maxBufferedBytes = 2u,
         scope = this,
       )
     rpc.receive(open.hexToByteArray())
     yield()
     rpc.receive(data.hexToByteArray())
-    coroutineContext.cancelChildren()
+    rpc.receive(end.hexToByteArray())
+    yield()
+    assertEquals(listOf(ack, reply), sent)
   }
 }

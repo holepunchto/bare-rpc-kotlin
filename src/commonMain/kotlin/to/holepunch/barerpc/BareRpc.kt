@@ -35,7 +35,8 @@ import to.holepunch.compactencoding.encode
  *   request is rejected as an unknown command. A [Reply.Stream] streams from [scope].
  * @param maxFrameSize the longest frame [receive] accepts, length prefix included.
  * @param maxBufferedBytes the most of one stream's data held for its collector. A peer that sends
- *   past it fails the connection with a [BufferOverflowException].
+ *   past it fails the connection with a [StreamOverflowException]. Below the 16 KiB pause mark, the
+ *   peer is never paused first.
  * @param scope runs the handlers of requests that stream a body, and streams each [Reply.Stream],
  *   since both need later [receive] calls. Without a scope the peer gets an error instead, after
  *   the handler has run for a [Reply.Stream].
@@ -560,13 +561,13 @@ private const val HIGH_WATER_MARK = 16 * 1024
 
 private val DEFAULT_MAX_BUFFERED_BYTES: UInt = 16u * 1024u * 1024u
 
-private class Inbox(val mask: ULong, private val max: UInt) {
+private class Inbox(val mask: ULong, private val maxBufferedBytes: UInt) {
   val chunks = Channel<ByteArray>(Channel.UNLIMITED)
-  private var buffered = 0
+  private var buffered = 0L
   private var paused = false
 
   fun add(size: Int): Boolean {
-    if (size.toUInt() > max - buffered.toUInt()) throw BufferOverflowException()
+    if (buffered + size > maxBufferedBytes.toLong()) throw StreamOverflowException()
     buffered += size
     if (paused || buffered < HIGH_WATER_MARK) return false
     paused = true

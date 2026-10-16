@@ -187,7 +187,7 @@ class RequestFlowTest {
       async { rpc.requestFlow(7u, ByteArray(0)).first() }
       yield()
       rpc.receive(open.hexToByteArray())
-      assertFailsWith<BufferOverflowException> { rpc.receive(data.hexToByteArray()) }
+      assertFailsWith<StreamOverflowException> { rpc.receive(data.hexToByteArray()) }
     }
   }
 }
