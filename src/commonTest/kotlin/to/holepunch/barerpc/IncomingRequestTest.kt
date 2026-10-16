@@ -21,6 +21,7 @@ class IncomingRequestTest {
   private val unknown =
     "2b0000000205010011556e6b6e6f776e20636f6d6d616e642037134552525f554e4b4e4f574e5f434f4d4d414e4400"
   private val secret = "0d00000002050100067365637265740000" // error id 5: "secret", "", 0
+  private val noDirection = "03000000030104" // stream id 1, pause, neither request nor response
 
   @Test
   fun `a request reaches the handler and its return value goes back`() = runTest {
@@ -143,5 +144,14 @@ class IncomingRequestTest {
     gate.complete(Unit)
     yield()
     assertEquals(listOf(first, ok), sent)
+  }
+
+  @Test
+  fun `a stream frame without a direction is ignored`() = runTest {
+    val sent = mutableListOf<String>()
+    val rpc = BareRpc(send = { sent += it.toHexString() })
+    rpc.receive(noDirection.hexToByteArray())
+    rpc.receive(hi.hexToByteArray())
+    assertEquals(listOf(unknown), sent)
   }
 }
