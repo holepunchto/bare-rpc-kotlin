@@ -15,6 +15,7 @@ import kotlinx.coroutines.yield
 
 class IncomingRequestTest {
   private val hi = "0700000001050700026869" // request id 5, command 7, "hi"
+  private val first = "0700000001010700026869" // request id 1, command 7, "hi"
   private val ok = "0700000002050000026f6b" // response id 5, "ok"
   private val boom = "110000000205010004626f6f6d06455f424f4f4d02" // error id 5: "boom", "E_BOOM", 1
   private val unknown =
@@ -120,5 +121,27 @@ class IncomingRequestTest {
         rpc.receive("0700000001000700026869".hexToByteArray())
       },
     )
+  }
+
+  @Test
+  fun `cancelling a blocked request still sends the frames queued behind it`() = runTest {
+    val gate = CompletableDeferred<Unit>()
+    val sent = mutableListOf<String>()
+    val rpc =
+      BareRpc(
+        send = {
+          val hex = it.toHexString()
+          if (hex == first) gate.await()
+          sent += hex
+        },
+        onRequest = { Reply.Data("ok".encodeToByteArray()) },
+      )
+    val call = launch { rpc.request(7u, "hi".encodeToByteArray()) }
+    yield()
+    rpc.receive(hi.hexToByteArray())
+    call.cancel()
+    gate.complete(Unit)
+    yield()
+    assertEquals(listOf(first, ok), sent)
   }
 }
