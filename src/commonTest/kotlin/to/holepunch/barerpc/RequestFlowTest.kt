@@ -40,6 +40,8 @@ class RequestFlowTest {
   private val boom =
     "110000000201010004626f6f6d06455f424f4f4d02" // error id 1: "boom", "E_BOOM", errno 1
   private val requestPause = "050000000301fd0401" // stream id 1, request pause
+  // stream id 1, request close error: "boom", "E_BOOM", errno 1
+  private val requestCloseError = "120000000301fd820104626f6f6d06455f424f4f4d02"
 
   @Test
   fun `collecting a request flow sends the request then the ack`() = runTest {
@@ -255,5 +257,20 @@ class RequestFlowTest {
     rpc.receive(data.hexToByteArray())
     rpc.receive(dataError.hexToByteArray())
     assertEquals(listOf("hi"), chunks.await().map { it.decodeToString() })
+  }
+
+  @Test
+  fun `a throwing request body fails the flow and closes the stream`() = runTest {
+    supervisorScope {
+      val sent = mutableListOf<String>()
+      val rpc = BareRpc(send = { sent += it.toHexString() })
+      val body = flow<ByteArray> { throw RemoteException("boom", "E_BOOM", 1) }
+      val chunks = async { rpc.requestFlow(7u, body).toList() }
+      yield()
+      rpc.receive(requestAck.hexToByteArray())
+      yield()
+      assertEquals("E_BOOM", assertFailsWith<RemoteException> { chunks.await() }.code)
+      assertEquals(listOf(requestOpen, ack, requestCloseError, destroy), sent)
+    }
   }
 }
