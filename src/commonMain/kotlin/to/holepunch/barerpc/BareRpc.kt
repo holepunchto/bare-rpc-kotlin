@@ -3,6 +3,8 @@ package to.holepunch.barerpc
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
@@ -498,20 +500,23 @@ public class BareRpc(
     }
   }
 
+  @OptIn(DelicateCoroutinesApi::class)
   private fun launchStream(
     scope: CoroutineScope,
     cleanup: suspend () -> Unit,
     block: suspend () -> Unit,
-  ) = scope.launch {
-    try {
-      block()
-    } catch (e: Throwable) {
-      // Every error here is the connection's failure, which receive and request already throw.
-      if (e is CancellationException) currentCoroutineContext().ensureActive()
-    } finally {
-      withContext(NonCancellable) { cleanup() }
+  ) =
+    scope.launch(start = CoroutineStart.ATOMIC) {
+      try {
+        currentCoroutineContext().ensureActive()
+        block()
+      } catch (e: Throwable) {
+        // Every error here is the connection's failure, which receive and request already throw.
+        if (e is CancellationException) currentCoroutineContext().ensureActive()
+      } finally {
+        withContext(NonCancellable) { cleanup() }
+      }
     }
-  }
 
   private suspend fun deliver(id: ULong, inbox: Inbox, data: ByteArray) {
     signal(id, inbox, STREAM_PAUSE) { inbox.add(data.size) }

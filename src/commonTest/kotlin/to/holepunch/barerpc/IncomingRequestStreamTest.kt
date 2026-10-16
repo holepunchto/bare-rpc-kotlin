@@ -3,8 +3,11 @@ package to.holepunch.barerpc
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.flow.first
@@ -322,5 +325,24 @@ class IncomingRequestStreamTest {
     rpc.receive(close.hexToByteArray())
     yield()
     assertEquals(listOf(ack, reply), sent)
+  }
+
+  @Test
+  fun `a request stream on a cancelled scope runs no handler and sends a destroy`() = runTest {
+    val sent = mutableListOf<String>()
+    var ran = false
+    val rpc =
+      BareRpc(
+        send = { sent += it.toHexString() },
+        onRequest = {
+          ran = true
+          Reply.Data(ByteArray(0))
+        },
+        scope = CoroutineScope(coroutineContext + Job().apply { cancel() }),
+      )
+    rpc.receive(open.hexToByteArray())
+    yield()
+    assertEquals(listOf(destroy), sent)
+    assertFalse(ran)
   }
 }
