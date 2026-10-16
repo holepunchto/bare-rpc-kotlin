@@ -401,7 +401,7 @@ public class BareRpc(
             replyBodies.remove(message.id)?.chunks to requestAcks.remove(message.id)
           }
         accepted?.complete(false)
-        chunks?.close(message.error?.let(::remoteException))
+        chunks?.close(if (event == STREAM_CLOSE) message.error?.let(::remoteException) else null)
       }
       event == STREAM_DESTROY && message.error == null -> Unit
       else -> TODO("streams")
