@@ -368,7 +368,7 @@ public class BareRpc(
       chunks.consumeAsFlow().onStart {
         sendMessage { StreamMessage(request.id, STREAM_REQUEST or STREAM_OPEN, null, null) }
       }
-    scope.launchStream({ requestBodies.remove(request.id) }) {
+    launchStream(scope, { requestBodies.remove(request.id) }) {
       reply(request.id) { onRequest(IncomingRequest(request.command, ByteArray(0), body)) }
     }
   }
@@ -395,7 +395,7 @@ public class BareRpc(
       if (earlyReplyAcks.remove(id)) accepted.complete(Unit) else replyAcks[id] = accepted
     }
     respond(id, STREAM_OPEN, ResponseResult.Success(null))
-    scope.launchStream({ replyAcks.remove(id) }) {
+    launchStream(scope, { replyAcks.remove(id) }) {
       accepted.await()
       var error: Throwable? = null
       body
@@ -415,16 +415,17 @@ public class BareRpc(
     }
   }
 
-  private fun CoroutineScope.launchStream(cleanup: () -> Unit, block: suspend () -> Unit) = launch {
-    try {
-      block()
-    } catch (e: Throwable) {
-      // Every error here is the connection's failure, which receive and request already throw.
-      if (e is CancellationException) currentCoroutineContext().ensureActive()
-    } finally {
-      withContext(NonCancellable) { state.withLock { cleanup() } }
+  private fun launchStream(scope: CoroutineScope, cleanup: () -> Unit, block: suspend () -> Unit) =
+    scope.launch {
+      try {
+        block()
+      } catch (e: Throwable) {
+        // Every error here is the connection's failure, which receive and request already throw.
+        if (e is CancellationException) currentCoroutineContext().ensureActive()
+      } finally {
+        withContext(NonCancellable) { state.withLock { cleanup() } }
+      }
     }
-  }
 
   private suspend fun acceptReply(id: ULong) {
     val accepted = state.withLock {
