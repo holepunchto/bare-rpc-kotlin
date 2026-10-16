@@ -520,34 +520,29 @@ public class BareRpc(
     }
 
   private suspend fun deliver(id: ULong, inbox: Inbox, data: ByteArray) {
-    signal(id, inbox, STREAM_PAUSE) { inbox.add(data.size) }
+    queueSignals(id) {
+      if (inbox.add(data.size)) listOf(inbox.mask or STREAM_PAUSE) else emptyList()
+    }
     inbox.chunks.trySend(data)
   }
 
   private suspend fun take(id: ULong, inbox: Inbox, data: ByteArray) {
-    signal(id, inbox, STREAM_RESUME) { inbox.remove(data.size) }
+    queueSignals(id) {
+      if (inbox.remove(data.size)) listOf(inbox.mask or STREAM_RESUME) else emptyList()
+    }
   }
 
   private suspend fun stopReading(id: ULong, inboxes: MutableMap<ULong, Inbox>) =
     withContext(NonCancellable) {
-      val queued = state.withLock {
-        val inbox = inboxes.remove(id)
-        val queued = inbox != null && failure == null
-        if (queued)
-          outgoing.addLast(
-            encode(frame, StreamMessage(id, inbox.mask or STREAM_DESTROY, null, null))
-          )
-        queued
-      }
-      if (queued) flush()
+      queueSignals(id) { listOfNotNull(inboxes.remove(id)?.let { it.mask or STREAM_DESTROY }) }
     }
 
-  private suspend fun signal(id: ULong, inbox: Inbox, event: ULong, crossesMark: () -> Boolean) {
+  private suspend fun queueSignals(id: ULong, flags: () -> List<ULong>) {
     val queued = state.withLock {
-      val queued = failure == null && crossesMark()
-      if (queued)
-        outgoing.addLast(encode(frame, StreamMessage(id, inbox.mask or event, null, null)))
-      queued
+      if (failure != null) return@withLock false
+      val signals = flags()
+      for (flag in signals) outgoing.addLast(encode(frame, StreamMessage(id, flag, null, null)))
+      signals.isNotEmpty()
     }
     if (queued) flush()
   }
