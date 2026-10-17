@@ -26,6 +26,10 @@ class RequestFlowTest {
   private val open = "0400000002010001" // response id 1, opens a stream
   private val data = "080000000301fd1002026869" // stream id 1, response data "hi"
   private val end = "050000000301fd2002" // stream id 1, response end
+  private val destroy = "050000000301fd4002" // stream id 1, response destroy
+  private val close = "050000000301fd0202" // stream id 1, response close
+  // stream id 1, response data with an error: "boom", "E_BOOM", errno 1
+  private val dataError = "120000000301fd900204626f6f6d06455f424f4f4d02"
   // stream id 1, response close error: "boom", "E_BOOM", errno 1
   private val closeError = "120000000301fd820204626f6f6d06455f424f4f4d02"
   // stream id 1, response end with an error: "boom", "E_BOOM", errno 1
@@ -36,6 +40,8 @@ class RequestFlowTest {
   private val boom =
     "110000000201010004626f6f6d06455f424f4f4d02" // error id 1: "boom", "E_BOOM", errno 1
   private val requestPause = "050000000301fd0401" // stream id 1, request pause
+  // stream id 1, request close error: "boom", "E_BOOM", errno 1
+  private val requestCloseError = "120000000301fd820104626f6f6d06455f424f4f4d02"
 
   @Test
   fun `collecting a request flow sends the request then the ack`() = runTest {
@@ -56,6 +62,18 @@ class RequestFlowTest {
     rpc.receive(data.hexToByteArray())
     rpc.receive(end.hexToByteArray())
     assertEquals(listOf("hi"), chunks.await().map { it.decodeToString() })
+  }
+
+  @Test
+  fun `a reply flow that ends sends no destroy`() = runTest {
+    val sent = mutableListOf<String>()
+    val rpc = BareRpc(send = { sent += it.toHexString() })
+    val chunks = async { rpc.requestFlow(7u, "hi".encodeToByteArray()).toList() }
+    yield()
+    rpc.receive(open.hexToByteArray())
+    rpc.receive(end.hexToByteArray())
+    chunks.await()
+    assertEquals(listOf(request, ack), sent)
   }
 
   @Test
@@ -202,5 +220,57 @@ class RequestFlowTest {
     rpc.receive(data.hexToByteArray())
     rpc.receive(endError.hexToByteArray())
     assertEquals(listOf("hi"), chunks.await().map { it.decodeToString() })
+  }
+
+  @Test
+  fun `stopping a reply flow early sends a destroy`() = runTest {
+    val sent = mutableListOf<String>()
+    val rpc = BareRpc(send = { sent += it.toHexString() })
+    val chunk = async { rpc.requestFlow(7u, "hi".encodeToByteArray()).first() }
+    yield()
+    rpc.receive(open.hexToByteArray())
+    rpc.receive(data.hexToByteArray())
+    assertEquals("hi", chunk.await().decodeToString())
+    assertEquals(listOf(request, ack, destroy), sent)
+  }
+
+  @Test
+  fun `a close after the end is ignored`() = runTest {
+    val sent = mutableListOf<String>()
+    val rpc = BareRpc(send = { sent += it.toHexString() })
+    val chunks = async { rpc.requestFlow(7u, "hi".encodeToByteArray()).toList() }
+    yield()
+    rpc.receive(open.hexToByteArray())
+    rpc.receive(data.hexToByteArray())
+    rpc.receive(end.hexToByteArray())
+    rpc.receive(close.hexToByteArray())
+    assertEquals(listOf("hi"), chunks.await().map { it.decodeToString() })
+    assertEquals(listOf(request, ack), sent)
+  }
+
+  @Test
+  fun `a data frame without data ends the flow cleanly`() = runTest {
+    val rpc = BareRpc(send = {})
+    val chunks = async { rpc.requestFlow(7u, "hi".encodeToByteArray()).toList() }
+    yield()
+    rpc.receive(open.hexToByteArray())
+    rpc.receive(data.hexToByteArray())
+    rpc.receive(dataError.hexToByteArray())
+    assertEquals(listOf("hi"), chunks.await().map { it.decodeToString() })
+  }
+
+  @Test
+  fun `a throwing request body fails the flow and closes the stream`() = runTest {
+    supervisorScope {
+      val sent = mutableListOf<String>()
+      val rpc = BareRpc(send = { sent += it.toHexString() })
+      val body = flow<ByteArray> { throw RemoteException("boom", "E_BOOM", 1) }
+      val chunks = async { rpc.requestFlow(7u, body).toList() }
+      yield()
+      rpc.receive(requestAck.hexToByteArray())
+      yield()
+      assertEquals("E_BOOM", assertFailsWith<RemoteException> { chunks.await() }.code)
+      assertEquals(listOf(requestOpen, ack, requestCloseError, destroy), sent)
+    }
   }
 }

@@ -5,6 +5,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelChildren
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
@@ -18,6 +19,8 @@ class RequestStreamTest {
   private val end = "050000000301fd2001" // stream id 1, request end
   private val pause = "050000000301fd0401" // stream id 1, request pause
   private val resume = "050000000301fd0801" // stream id 1, request resume
+  // stream id 1, request close error: "boom", "E_BOOM", errno 1
+  private val closeError = "120000000301fd820104626f6f6d06455f424f4f4d02"
   private val destroy = "050000000301fd4001" // stream id 1, request destroy
   // stream id 1, request destroy error: "boom", "E_BOOM", errno 1
   private val destroyError = "120000000301fdc00104626f6f6d06455f424f4f4d02"
@@ -168,5 +171,20 @@ class RequestStreamTest {
     assertEquals(listOf(open), sent)
     rpc.receive(ok.hexToByteArray())
     assertEquals("ok", reply.await().decodeToString())
+  }
+
+  @Test
+  fun `a throwing request body closes the stream with the error`() = runTest {
+    supervisorScope {
+      val sent = mutableListOf<String>()
+      val rpc = BareRpc(send = { sent += it.toHexString() })
+      val body = flow<ByteArray> { throw RemoteException("boom", "E_BOOM", 1) }
+      val reply = async { rpc.request(7u, body) }
+      yield()
+      rpc.receive(ack.hexToByteArray())
+      yield()
+      assertEquals("E_BOOM", assertFailsWith<RemoteException> { reply.await() }.code)
+      assertEquals(listOf(open, closeError), sent)
+    }
   }
 }
