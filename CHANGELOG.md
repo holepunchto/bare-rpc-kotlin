@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.0
+
+Streams, in both directions, wire-compatible with the JavaScript `bare-rpc`. A stream frame no longer closes the connection. Still checked against the `hrpc-test` 0.2.4 wire fixtures, and against `bare-rpc` 1.3.8 running under Node.
+
+- Breaking: `onRequest` and `CommandRouter` handlers return a `Reply`. `Reply.Data` is a single reply, and `Reply.Stream` streams one. To migrate, wrap each `ByteArray` reply in `Reply.Data`.
+- `request(command, body)` streams a request body, and `IncomingRequest.body` reads the peer's as a `Flow`.
+- `requestFlow` emits a streamed reply chunk by chunk, or a single reply as one chunk. `request` throws `UnexpectedStreamException` when the peer replies with a stream.
+- The end that reads a request body or streams a reply needs the new `scope` parameter. Without one, the peer gets an `ERR_NO_SCOPE` error.
+- Backpressure in both directions: a peer's pause holds this end's sends, and a stream pauses the peer once 16 KiB is buffered.
+- `maxBufferedBytes`, 16 MiB by default, caps each stream. A peer that sends past it fails the connection with `StreamOverflowException`.
+- Streams tear down as in JavaScript. Stopping a collection, or leaving a request body unread when its reply ends, tells the peer to stop sending, and the peer's destroy stops this end's sends. A body that throws closes its stream with the error, and the peer's close with an error fails the body or flow with a `RemoteException`. A request body stays readable until its reply ends, so it can be streamed back.
+- A send that has started finishes even if its caller is cancelled, so frames queued behind it still go out.
+
 ## 0.1.0
 
 Initial release.
