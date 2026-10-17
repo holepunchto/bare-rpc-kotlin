@@ -36,7 +36,7 @@ class UsageTest {
   }
 
   @Test
-  fun `a streamed request is streamed back by the other end`() = runTest {
+  fun `a streamed request is answered with a streamed reply`() = runTest {
     val toServer = Channel<ByteArray>(Channel.UNLIMITED)
     val toClient = Channel<ByteArray>(Channel.UNLIMITED)
 
