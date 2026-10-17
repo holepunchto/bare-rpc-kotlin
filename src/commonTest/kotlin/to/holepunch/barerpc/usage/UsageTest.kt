@@ -4,6 +4,9 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import to.holepunch.barerpc.BareRpc
@@ -29,6 +32,30 @@ class UsageTest {
     launch { for (bytes in toClient) client.receive(bytes) }
 
     assertEquals("hello ada", client.request(1u, "ada".encodeToByteArray()).decodeToString())
+    coroutineContext.cancelChildren()
+  }
+
+  @Test
+  fun `a streamed request is answered with a streamed reply`() = runTest {
+    val toServer = Channel<ByteArray>(Channel.UNLIMITED)
+    val toClient = Channel<ByteArray>(Channel.UNLIMITED)
+
+    val router = CommandRouter()
+    router.onRequest(2u) { request ->
+      Reply.Stream(request.body!!.map { it.decodeToString().uppercase().encodeToByteArray() })
+    }
+
+    val server = BareRpc(send = toClient::send, onRequest = router::dispatch, scope = this)
+    val client = BareRpc(send = toServer::send)
+
+    launch { for (bytes in toServer) server.receive(bytes) }
+    launch { for (bytes in toClient) client.receive(bytes) }
+
+    val body = flowOf("ada", "grace").map { it.encodeToByteArray() }
+    assertEquals(
+      listOf("ADA", "GRACE"),
+      client.requestFlow(2u, body).toList().map { it.decodeToString() },
+    )
     coroutineContext.cancelChildren()
   }
 }
