@@ -1,5 +1,7 @@
 # bare-rpc-kotlin
 
+[![JitPack](https://jitpack.io/v/holepunchto/bare-rpc-kotlin.svg)](https://jitpack.io/#holepunchto/bare-rpc-kotlin)
+
 https://github.com/holepunchto/librpc ABI compatible RPC for Kotlin
 
 ## Install
