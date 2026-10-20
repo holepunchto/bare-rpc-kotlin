@@ -12,7 +12,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
 
-internal val fixtures = File(System.getProperty("hrpc-test.fixtures"))
+internal val fixtures = File(System.getProperty("bare-rpc-test.fixtures"))
 
 internal val directories = fixtures.listFiles()!!.filter { it.isDirectory }.map { it.name }.toSet()
 

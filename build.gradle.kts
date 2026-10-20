@@ -55,20 +55,20 @@ dokka {
 
 ktfmt { googleStyle() }
 
-val fixturesVersion = "0.2.4"
+val fixturesVersion = "0.1.0"
 
 val npm =
   if (System.getProperty("os.name").startsWith("Windows")) listOf("cmd", "/c", "npm")
   else listOf("npm")
 
-val fixturesDir = layout.buildDirectory.dir("hrpc-test")
+val fixturesDir = layout.buildDirectory.dir("bare-rpc-test")
 
 val packFixtures =
   tasks.register<Exec>("packFixtures") {
     inputs.property("version", fixturesVersion)
-    outputs.file(fixturesDir.map { it.file("hrpc-test-$fixturesVersion.tgz") })
+    outputs.file(fixturesDir.map { it.file("bare-rpc-test-$fixturesVersion.tgz") })
     workingDir(fixturesDir)
-    commandLine(npm + listOf("pack", "hrpc-test@$fixturesVersion", "--loglevel=error"))
+    commandLine(npm + listOf("pack", "bare-rpc-test@$fixturesVersion", "--loglevel=error"))
   }
 
 val unpackFixtures =
@@ -105,7 +105,7 @@ tasks.named<Test>("jvmTest") {
   )
   val fixtures = fixturesDir.map { it.dir("unpacked/package/fixtures").asFile.path }
   jvmArgumentProviders.add(
-    CommandLineArgumentProvider { listOf("-Dhrpc-test.fixtures=${fixtures.get()}") }
+    CommandLineArgumentProvider { listOf("-Dbare-rpc-test.fixtures=${fixtures.get()}") }
   )
 }
 
