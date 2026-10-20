@@ -14,12 +14,12 @@ class StreamFlagsTest {
   fun `a stream error with the data flag encodes only the error`() =
     assertContentEquals(
       bothFlags,
-      encode(frame, StreamMessage(2uL, 0x192uL, byteArrayOf(1), RemoteError("gone", "E", 1))),
+      encode(frame, Message.Stream(2uL, 0x192uL, byteArrayOf(1), RemoteError("gone", "E", 1))),
     )
 
   @Test
   fun `a stream frame with both flags decodes as an error`() {
-    val message = decode(frame, bothFlags) as StreamMessage
+    val message = decode(frame, bothFlags) as Message.Stream
     assertNull(message.data)
     assertEquals("gone", message.error?.message)
   }
@@ -28,6 +28,6 @@ class StreamFlagsTest {
   fun `a stream message with an error but only the data flag encodes the data`() =
     assertContentEquals(
       "070000000302fd10010101".hexToByteArray(),
-      encode(frame, StreamMessage(2uL, 0x110uL, byteArrayOf(1), RemoteError("gone", "E", 1))),
+      encode(frame, Message.Stream(2uL, 0x110uL, byteArrayOf(1), RemoteError("gone", "E", 1))),
     )
 }

@@ -12,33 +12,30 @@ import to.holepunch.compactencoding.utf8
 
 internal sealed interface Message {
   val id: ULong
+
+  class Request(
+    override val id: ULong,
+    val command: ULong,
+    val stream: ULong,
+    val data: ByteArray?,
+  ) : Message
+
+  class Response(
+    override val id: ULong,
+    val stream: ULong,
+    val data: ByteArray?,
+    val error: RemoteError?,
+  ) : Message
+
+  class Stream(
+    override val id: ULong,
+    val flags: ULong,
+    val data: ByteArray?,
+    val error: RemoteError?,
+  ) : Message
 }
 
-internal class RequestMessage(
-  override val id: ULong,
-  val command: ULong,
-  val stream: ULong,
-  val data: ByteArray?,
-) : Message
-
-internal class ResponseMessage(
-  override val id: ULong,
-  val stream: ULong,
-  val result: ResponseResult,
-) : Message
-
-internal sealed interface ResponseResult {
-  class Success(val data: ByteArray?) : ResponseResult
-}
-
-internal class RemoteError(val message: String, val code: String, val errno: Long) : ResponseResult
-
-internal class StreamMessage(
-  override val id: ULong,
-  val flags: ULong,
-  val data: ByteArray?,
-  val error: RemoteError?,
-) : Message
+internal class RemoteError(val message: String, val code: String, val errno: Long)
 
 internal val frame: Codec<Message> =
   object : Codec<Message> {
@@ -118,24 +115,20 @@ private val body: Codec<Message> =
         REQUEST -> {
           val command = uint.decode(state)
           val stream = uint.decode(state)
-          RequestMessage(id, command, stream, if (stream == 0uL) buffer.decode(state) else null)
+          Message.Request(id, command, stream, if (stream == 0uL) buffer.decode(state) else null)
         }
         RESPONSE -> {
           val hasError = bool.decode(state)
           val stream = uint.decode(state)
-          ResponseMessage(
-            id,
-            stream,
-            if (hasError) remoteError.decode(state)
-            else ResponseResult.Success(if (stream == 0uL) buffer.decode(state) else null),
-          )
+          if (hasError) Message.Response(id, stream, null, remoteError.decode(state))
+          else Message.Response(id, stream, if (stream == 0uL) buffer.decode(state) else null, null)
         }
         STREAM -> {
           val flags = uint.decode(state)
           val error = if (flags and STREAM_ERROR != 0uL) remoteError.decode(state) else null
           val data =
             if (error == null && flags and STREAM_DATA != 0uL) buffer.decode(state) else null
-          StreamMessage(id, flags, data, error)
+          Message.Stream(id, flags, data, error)
         }
         else -> throw UnknownMessageException(type)
       }
@@ -145,26 +138,23 @@ private val body: Codec<Message> =
       fun <T> put(codec: Codec<T>, field: T) = step.put(codec, state, field)
 
       when (value) {
-        is RequestMessage -> {
+        is Message.Request -> {
           put(uint, REQUEST)
           put(uint, value.id)
           put(uint, value.command)
           put(uint, value.stream)
           if (value.stream == 0uL) put(buffer, value.data ?: ByteArray(0))
         }
-        is ResponseMessage -> {
+        is Message.Response -> {
           put(uint, RESPONSE)
           put(uint, value.id)
-          val result = value.result
-          put(bool, result is RemoteError)
+          val error = value.error
+          put(bool, error != null)
           put(uint, value.stream)
-          when (result) {
-            is RemoteError -> put(remoteError, result)
-            is ResponseResult.Success ->
-              if (value.stream == 0uL) put(buffer, result.data ?: ByteArray(0))
-          }
+          if (error != null) put(remoteError, error)
+          else if (value.stream == 0uL) put(buffer, value.data ?: ByteArray(0))
         }
-        is StreamMessage -> {
+        is Message.Stream -> {
           put(uint, STREAM)
           put(uint, value.id)
           put(uint, value.flags)
