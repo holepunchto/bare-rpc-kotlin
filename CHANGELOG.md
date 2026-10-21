@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.0
+
+The frame codec is public, so a tool can encode and decode a single bare-rpc frame without a connection. Checked against the `bare-rpc-test` 0.1.0 wire fixtures, and against `bare-rpc` 1.3.8 running under Node.
+
+- `Messages.encode` encodes a `Message` as one frame, and throws `IllegalArgumentException` for a stream frame that carries the error flag without an error.
+- `Messages.decode` decodes the frame at the start of a buffer and returns the `Message` with the number of bytes the frame took. It throws `MalformedFrameException` or `UnknownMessageException` for a frame it rejects.
+- `Message.Request`, `Message.Response` and `Message.Stream` describe a frame's body and compare their payloads by content. `RemoteError` is the error a peer sends in place of a reply or to close a stream.
+
 ## 0.2.0
 
 Streams, in both directions, wire-compatible with the JavaScript `bare-rpc`. A stream frame no longer closes the connection. Still checked against the `hrpc-test` 0.2.4 wire fixtures, and against `bare-rpc` 1.3.8 running under Node.
