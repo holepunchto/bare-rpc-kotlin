@@ -78,7 +78,7 @@ public class BareRpc(
    *   [close].
    */
   public suspend fun event(command: ULong, data: ByteArray) {
-    sendMessage { RequestMessage(0u, command, 0u, data) }
+    sendMessage { Message.Request(0u, command, 0u, data) }
   }
 
   /**
@@ -185,7 +185,7 @@ public class BareRpc(
           requestAcks[id] = accepted
           requestPauses[id] = paused
         }
-        RequestMessage(id, command, if (body != null) STREAM_OPEN else 0u, data)
+        Message.Request(id, command, if (body != null) STREAM_OPEN else 0u, data)
       }
       return coroutineScope {
         val sender = body?.let { launch { sendRequestBody(id, it, accepted, paused) } }
@@ -220,11 +220,11 @@ public class BareRpc(
           requestAcks[id] = accepted
           requestPauses[id] = paused
         }
-        RequestMessage(id, command, if (body != null) STREAM_OPEN else 0u, data)
+        Message.Request(id, command, if (body != null) STREAM_OPEN else 0u, data)
       }
       sendMessage {
         inbox.opened = true
-        StreamMessage(id, STREAM_RESPONSE or STREAM_OPEN, null, null)
+        Message.Stream(id, STREAM_RESPONSE or STREAM_OPEN, null, null)
       }
       coroutineScope {
         val sender = body?.let { launch { sendRequestBody(id, it, accepted, paused) } }
@@ -268,13 +268,13 @@ public class BareRpc(
       .catch { error = it }
       .collect {
         paused.awaitResume()
-        sendMessage { StreamMessage(id, mask or STREAM_DATA, it, null) }
+        sendMessage { Message.Stream(id, mask or STREAM_DATA, it, null) }
       }
     val failed = error
     paused.awaitResume()
     sendMessage {
-      if (failed == null) StreamMessage(id, mask or STREAM_END, null, null)
-      else StreamMessage(id, mask or STREAM_CLOSE or STREAM_ERROR, null, remoteError(failed))
+      if (failed == null) Message.Stream(id, mask or STREAM_END, null, null)
+      else Message.Stream(id, mask or STREAM_CLOSE or STREAM_ERROR, null, remoteError(failed))
     }
     return failed
   }
@@ -353,16 +353,16 @@ public class BareRpc(
 
   private suspend fun dispatch(message: Message) {
     when (message) {
-      is RequestMessage ->
+      is Message.Request ->
         if (message.id != 0uL) {
           answer(message)
         } else {
           if (message.stream != 0uL) throw MalformedFrameException("an event cannot open a stream")
           onEvent(IncomingEvent(message.command, message.data!!))
         }
-      is ResponseMessage -> {
-        val result = message.result
-        if (result is ResponseResult.Success && message.stream != 0uL) {
+      is Message.Response -> {
+        val error = message.error
+        if (error == null && message.stream != 0uL) {
           val (reply, accepted) =
             state.withLock {
               if (message.id in replyBodies) return
@@ -381,20 +381,17 @@ public class BareRpc(
           chunks = replyBodies.remove(message.id)?.chunks
         }
         accepted?.complete(false)
-        when (result) {
-          is RemoteError -> {
-            val error = remoteException(result)
-            reply?.completeExceptionally(error)
-            chunks?.close(error)
-          }
-          is ResponseResult.Success -> {
-            reply?.complete(result.data!!)
-            chunks?.trySend(result.data!!)
-            chunks?.close()
-          }
+        if (error != null) {
+          val exception = remoteException(error)
+          reply?.completeExceptionally(exception)
+          chunks?.close(exception)
+        } else {
+          reply?.complete(message.data!!)
+          chunks?.trySend(message.data!!)
+          chunks?.close()
         }
       }
-      is StreamMessage -> {
+      is Message.Stream -> {
         if (message.id == 0uL) return
         val flag = streamEvents.firstOrNull { message.flags and it != 0uL } ?: return
         val event = if (flag == STREAM_DATA && message.data == null) STREAM_END else flag
@@ -407,7 +404,7 @@ public class BareRpc(
     }
   }
 
-  private suspend fun onRequestStream(message: StreamMessage, event: ULong) {
+  private suspend fun onRequestStream(message: Message.Stream, event: ULong) {
     when {
       event == STREAM_OPEN -> state.withLock { requestAcks.remove(message.id) }?.complete(true)
       event == STREAM_PAUSE || event == STREAM_RESUME ->
@@ -426,7 +423,7 @@ public class BareRpc(
     }
   }
 
-  private suspend fun onReplyStream(message: StreamMessage, event: ULong) {
+  private suspend fun onReplyStream(message: Message.Stream, event: ULong) {
     when {
       event == STREAM_OPEN -> acceptReply(message.id)
       event == STREAM_PAUSE || event == STREAM_RESUME ->
@@ -445,7 +442,7 @@ public class BareRpc(
     }
   }
 
-  private suspend fun answer(request: RequestMessage) {
+  private suspend fun answer(request: Message.Request) {
     if (request.stream == 0uL) {
       reply(request.id) { onRequest(IncomingRequest(request.command, request.data!!, null)) }
       return
@@ -483,12 +480,12 @@ public class BareRpc(
         handler()
       } catch (e: Throwable) {
         if (e is CancellationException) currentCoroutineContext().ensureActive()
-        respond(id, 0u, remoteError(e))
+        respond(id, 0u, error = remoteError(e))
         return null
       }
     return when (reply) {
       is Reply.Data -> {
-        respond(id, 0u, ResponseResult.Success(reply.data))
+        respond(id, 0u, data = reply.data)
         null
       }
       is Reply.Stream -> streamReply(id, reply.body)
@@ -504,7 +501,7 @@ public class BareRpc(
       if (earlyReplyAcks.remove(id)) accepted.complete(Unit) else replyAcks[id] = accepted
       replyPauses[id] = paused
     }
-    respond(id, STREAM_OPEN, ResponseResult.Success(null))
+    respond(id, STREAM_OPEN)
     return launchStream(
       scope,
       {
@@ -567,7 +564,7 @@ public class BareRpc(
     val queued = state.withLock {
       if (failure != null) return@withLock false
       val flags = signals()
-      for (flag in flags) outgoing.addLast(encode(frame, StreamMessage(id, flag, null, null)))
+      for (flag in flags) outgoing.addLast(encode(frame, Message.Stream(id, flag, null, null)))
       flags.isNotEmpty()
     }
     if (queued) flush()
@@ -582,10 +579,15 @@ public class BareRpc(
     accepted?.complete(Unit)
   }
 
-  private suspend fun respond(id: ULong, stream: ULong, result: ResponseResult) {
+  private suspend fun respond(
+    id: ULong,
+    stream: ULong,
+    data: ByteArray? = null,
+    error: RemoteError? = null,
+  ) {
     state.withLock {
       if (stream == 0uL) earlyReplyAcks.remove(id)
-      outgoing.addLast(encode(frame, ResponseMessage(id, stream, result)))
+      outgoing.addLast(encode(frame, Message.Response(id, stream, data, error)))
     }
     flush()
   }
