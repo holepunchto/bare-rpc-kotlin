@@ -10,32 +10,127 @@ import to.holepunch.compactencoding.uint
 import to.holepunch.compactencoding.uint32
 import to.holepunch.compactencoding.utf8
 
-internal sealed interface Message {
-  val id: ULong
+/** One bare-rpc message, the body of a frame. */
+public sealed interface Message {
+  /** The request id, or 0 for an event. */
+  public val id: ULong
 
-  class Request(
+  /**
+   * A request or, with an [id] of 0, an event.
+   *
+   * @property command the command the request names.
+   * @property stream the stream flags, 0 unless the request opens a stream.
+   * @property data the payload, absent when the request opens a stream.
+   */
+  public class Request(
     override val id: ULong,
-    val command: ULong,
-    val stream: ULong,
-    val data: ByteArray?,
-  ) : Message
+    public val command: ULong,
+    public val stream: ULong,
+    public val data: ByteArray?,
+  ) : Message {
+    /** Equal when every field is, comparing [data] by content. */
+    override fun equals(other: Any?): Boolean =
+      other is Request &&
+        id == other.id &&
+        command == other.command &&
+        stream == other.stream &&
+        data.contentEquals(other.data)
 
-  class Response(
-    override val id: ULong,
-    val stream: ULong,
-    val data: ByteArray?,
-    val error: RemoteError?,
-  ) : Message
+    /** Consistent with [equals]. */
+    override fun hashCode(): Int = listOf(id, command, stream, data.contentHashCode()).hashCode()
+  }
 
-  class Stream(
+  /**
+   * A reply to the request with the same [id].
+   *
+   * @property stream the stream flags, 0 unless the reply opens a stream.
+   * @property data the payload, absent when the reply is an error or opens a stream.
+   * @property error the error the request failed with, or null.
+   */
+  public class Response(
     override val id: ULong,
-    val flags: ULong,
-    val data: ByteArray?,
-    val error: RemoteError?,
-  ) : Message
+    public val stream: ULong,
+    public val data: ByteArray?,
+    public val error: RemoteError?,
+  ) : Message {
+    /** Equal when every field is, comparing [data] by content. */
+    override fun equals(other: Any?): Boolean =
+      other is Response &&
+        id == other.id &&
+        stream == other.stream &&
+        data.contentEquals(other.data) &&
+        error == other.error
+
+    /** Consistent with [equals]. */
+    override fun hashCode(): Int = listOf(id, stream, data.contentHashCode(), error).hashCode()
+  }
+
+  /**
+   * A frame of a request or reply stream.
+   *
+   * @property flags the stream event and the direction it travels in.
+   * @property data the payload of a data frame, or null.
+   * @property error the error a stream is closed with, or null.
+   */
+  public class Stream(
+    override val id: ULong,
+    public val flags: ULong,
+    public val data: ByteArray?,
+    public val error: RemoteError?,
+  ) : Message {
+    /** Equal when every field is, comparing [data] by content. */
+    override fun equals(other: Any?): Boolean =
+      other is Stream &&
+        id == other.id &&
+        flags == other.flags &&
+        data.contentEquals(other.data) &&
+        error == other.error
+
+    /** Consistent with [equals]. */
+    override fun hashCode(): Int = listOf(id, flags, data.contentHashCode(), error).hashCode()
+  }
 }
 
-internal class RemoteError(val message: String, val code: String, val errno: Long)
+/**
+ * The error a peer sends in place of a reply or to close a stream.
+ *
+ * @property message the error's message.
+ * @property code the error's code, such as `ERR_UNKNOWN_COMMAND`.
+ * @property errno the error's number.
+ */
+public data class RemoteError(val message: String, val code: String, val errno: Long)
+
+/**
+ * The result of [Messages.decode].
+ *
+ * @property message the decoded message.
+ * @property read the number of bytes the frame took, length prefix included.
+ */
+public class Decoded(public val message: Message, public val read: Int)
+
+/** The bare-rpc frame codec: a uint32 little-endian length followed by the message. */
+public object Messages {
+  /**
+   * Encodes [message] as one frame.
+   *
+   * @throws IllegalArgumentException for a [Message.Stream] whose flags carry the error flag
+   *   without an [Message.Stream.error].
+   */
+  public fun encode(message: Message): ByteArray =
+    to.holepunch.compactencoding.encode(frame, message)
+
+  /**
+   * Decodes the frame at the start of [bytes].
+   *
+   * @throws MalformedFrameException when the frame is truncated or its body cannot be read.
+   * @throws UnknownMessageException when the message type is not one this format defines.
+   */
+  public fun decode(bytes: ByteArray): Decoded {
+    val state = State(bytes)
+    val message = frame.decode(state)
+    return Decoded(message, state.start)
+  }
+}
 
 internal val frame: Codec<Message> =
   object : Codec<Message> {
@@ -159,7 +254,8 @@ private val body: Codec<Message> =
           put(uint, value.id)
           put(uint, value.flags)
           when {
-            value.flags and STREAM_ERROR != 0uL -> put(remoteError, value.error!!)
+            value.flags and STREAM_ERROR != 0uL ->
+              put(remoteError, requireNotNull(value.error) { "the error flag needs an error" })
             value.flags and STREAM_DATA != 0uL -> put(buffer, value.data ?: ByteArray(0))
           }
         }
