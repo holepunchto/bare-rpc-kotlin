@@ -1,40 +1,57 @@
 # bare-rpc-kotlin
 
-https://github.com/holepunchto/librpc ABI compatible RPC for Kotlin
+RPC over any byte transport for Kotlin. The Kotlin counterpart of [bare-rpc](https://github.com/holepunchto/bare-rpc), and wire compatible with it. Built on [compact-encoding-kotlin](https://github.com/holepunchto/compact-encoding-kotlin).
 
-## Install
-
-Published through [JitPack](https://jitpack.io/#holepunchto/bare-rpc-kotlin):
-
-```kotlin
+```groovy
 repositories {
-  maven("https://jitpack.io")
+  maven { url "https://jitpack.io" }
 }
 
 dependencies {
-  implementation("com.github.holepunchto.bare-rpc-kotlin:bare-rpc-kotlin:<tag>")
+  implementation "com.github.holepunchto.bare-rpc-kotlin:bare-rpc-kotlin:<tag>"
 }
 ```
 
 ## Usage
 
-[`UsageTest.kt`](src/commonTest/kotlin/to/holepunch/barerpc/usage/UsageTest.kt) connects two ends over in-memory channels and answers a request through a `CommandRouter`, then streams a request body and reads the reply streamed back with `requestFlow`. The end that reads a request body or streams a reply needs a `scope` to run in, as the server has here. A real transport takes the channels' place: give `BareRpc` a `send` that writes each frame to it, and pass every chunk it reads to `receive` from a single read loop. When `receive` throws, the connection is closed: stop the loop and close the transport. When the transport ends, or you close it, call `BareRpc.close`: pending and later calls then throw `ConnectionClosedException`. `send` may suspend for backpressure, but must not wait on this end's own read loop.
+```kotlin
+import to.holepunch.bare.rpc.CommandRouter
+import to.holepunch.bare.rpc.Reply
+import to.holepunch.bare.rpc.Rpc
 
-## API
+val router = CommandRouter()
 
-The KDoc on each public declaration is the reference. `./gradlew dokkaGenerate` renders it to `build/dokka/html`.
+router.onRequest(1u) { request ->
+  Reply.Data("hello ${request.data.decodeToString()}".encodeToByteArray())
+}
 
-## Build
+val rpc =
+  Rpc(
+    transport.data,
+    transport::write,
+    scope,
+    onRequest = router::dispatch,
+    onEvent = router::dispatch,
+  )
 
-Building needs:
-
-- JDK 21
-- Node.js, whose `npm` fetches the wire fixtures and whose `node` runs the JS bare-rpc peer
-- An Android SDK with platform `android-36`, found through `ANDROID_HOME` or `sdk.dir` in `local.properties`
-
-```sh
-./gradlew check
+val reply = rpc.request(1u, "ada".encodeToByteArray())
 ```
+
+Any transport with a `Flow` of `ByteArray` to read and a suspending function to write can be used, such as the IPC of a worklet from [bare-kit-kotlin](https://github.com/holepunchto/bare-kit-kotlin). `Rpc` collects the data in `scope`, which also runs the streams. The connection closes when the data ends, fails if collecting it does, and closes on `close()`, after which pending and later calls throw. The transport stays open, so close it once done. The write function may suspend for backpressure, but must not wait on the data being collected.
+
+## Streams
+
+```kotlin
+router.onRequest(2u) { request ->
+  Reply.Stream(request.body!!.map { it.decodeToString().uppercase().encodeToByteArray() })
+}
+
+val body = flowOf("ada", "grace").map { it.encodeToByteArray() }
+
+rpc.requestFlow(2u, body).collect { println(it.decodeToString()) }
+```
+
+`requestFlow` streams a request body and collects the reply streamed back.
 
 ## License
 

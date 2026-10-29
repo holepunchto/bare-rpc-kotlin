@@ -1,0 +1,169 @@
+// Klib ABI Dump
+// Targets: [js]
+// Rendering settings:
+// - Signature version: 2
+// - Show manifest properties: true
+// - Show declarations: true
+
+// Library unique name: <com.github.holepunchto:bare-rpc-kotlin>
+sealed interface to.holepunch.bare.rpc/Message { // to.holepunch.bare.rpc/Message|null[0]
+    abstract val id // to.holepunch.bare.rpc/Message.id|{}id[0]
+        abstract fun <get-id>(): kotlin/ULong // to.holepunch.bare.rpc/Message.id.<get-id>|<get-id>(){}[0]
+
+    final class Request : to.holepunch.bare.rpc/Message { // to.holepunch.bare.rpc/Message.Request|null[0]
+        constructor <init>(kotlin/ULong, kotlin/ULong, kotlin/ULong, kotlin/ByteArray?) // to.holepunch.bare.rpc/Message.Request.<init>|<init>(kotlin.ULong;kotlin.ULong;kotlin.ULong;kotlin.ByteArray?){}[0]
+
+        final val command // to.holepunch.bare.rpc/Message.Request.command|{}command[0]
+            final fun <get-command>(): kotlin/ULong // to.holepunch.bare.rpc/Message.Request.command.<get-command>|<get-command>(){}[0]
+        final val data // to.holepunch.bare.rpc/Message.Request.data|{}data[0]
+            final fun <get-data>(): kotlin/ByteArray? // to.holepunch.bare.rpc/Message.Request.data.<get-data>|<get-data>(){}[0]
+        final val id // to.holepunch.bare.rpc/Message.Request.id|{}id[0]
+            final fun <get-id>(): kotlin/ULong // to.holepunch.bare.rpc/Message.Request.id.<get-id>|<get-id>(){}[0]
+        final val stream // to.holepunch.bare.rpc/Message.Request.stream|{}stream[0]
+            final fun <get-stream>(): kotlin/ULong // to.holepunch.bare.rpc/Message.Request.stream.<get-stream>|<get-stream>(){}[0]
+
+        final fun equals(kotlin/Any?): kotlin/Boolean // to.holepunch.bare.rpc/Message.Request.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // to.holepunch.bare.rpc/Message.Request.hashCode|hashCode(){}[0]
+    }
+
+    final class Response : to.holepunch.bare.rpc/Message { // to.holepunch.bare.rpc/Message.Response|null[0]
+        constructor <init>(kotlin/ULong, kotlin/ULong, kotlin/ByteArray?, to.holepunch.bare.rpc/RemoteError?) // to.holepunch.bare.rpc/Message.Response.<init>|<init>(kotlin.ULong;kotlin.ULong;kotlin.ByteArray?;to.holepunch.bare.rpc.RemoteError?){}[0]
+
+        final val data // to.holepunch.bare.rpc/Message.Response.data|{}data[0]
+            final fun <get-data>(): kotlin/ByteArray? // to.holepunch.bare.rpc/Message.Response.data.<get-data>|<get-data>(){}[0]
+        final val error // to.holepunch.bare.rpc/Message.Response.error|{}error[0]
+            final fun <get-error>(): to.holepunch.bare.rpc/RemoteError? // to.holepunch.bare.rpc/Message.Response.error.<get-error>|<get-error>(){}[0]
+        final val id // to.holepunch.bare.rpc/Message.Response.id|{}id[0]
+            final fun <get-id>(): kotlin/ULong // to.holepunch.bare.rpc/Message.Response.id.<get-id>|<get-id>(){}[0]
+        final val stream // to.holepunch.bare.rpc/Message.Response.stream|{}stream[0]
+            final fun <get-stream>(): kotlin/ULong // to.holepunch.bare.rpc/Message.Response.stream.<get-stream>|<get-stream>(){}[0]
+
+        final fun equals(kotlin/Any?): kotlin/Boolean // to.holepunch.bare.rpc/Message.Response.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // to.holepunch.bare.rpc/Message.Response.hashCode|hashCode(){}[0]
+    }
+
+    final class Stream : to.holepunch.bare.rpc/Message { // to.holepunch.bare.rpc/Message.Stream|null[0]
+        constructor <init>(kotlin/ULong, kotlin/ULong, kotlin/ByteArray?, to.holepunch.bare.rpc/RemoteError?) // to.holepunch.bare.rpc/Message.Stream.<init>|<init>(kotlin.ULong;kotlin.ULong;kotlin.ByteArray?;to.holepunch.bare.rpc.RemoteError?){}[0]
+
+        final val data // to.holepunch.bare.rpc/Message.Stream.data|{}data[0]
+            final fun <get-data>(): kotlin/ByteArray? // to.holepunch.bare.rpc/Message.Stream.data.<get-data>|<get-data>(){}[0]
+        final val error // to.holepunch.bare.rpc/Message.Stream.error|{}error[0]
+            final fun <get-error>(): to.holepunch.bare.rpc/RemoteError? // to.holepunch.bare.rpc/Message.Stream.error.<get-error>|<get-error>(){}[0]
+        final val flags // to.holepunch.bare.rpc/Message.Stream.flags|{}flags[0]
+            final fun <get-flags>(): kotlin/ULong // to.holepunch.bare.rpc/Message.Stream.flags.<get-flags>|<get-flags>(){}[0]
+        final val id // to.holepunch.bare.rpc/Message.Stream.id|{}id[0]
+            final fun <get-id>(): kotlin/ULong // to.holepunch.bare.rpc/Message.Stream.id.<get-id>|<get-id>(){}[0]
+
+        final fun equals(kotlin/Any?): kotlin/Boolean // to.holepunch.bare.rpc/Message.Stream.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // to.holepunch.bare.rpc/Message.Stream.hashCode|hashCode(){}[0]
+    }
+}
+
+sealed interface to.holepunch.bare.rpc/Reply { // to.holepunch.bare.rpc/Reply|null[0]
+    final class Data : to.holepunch.bare.rpc/Reply { // to.holepunch.bare.rpc/Reply.Data|null[0]
+        constructor <init>(kotlin/ByteArray) // to.holepunch.bare.rpc/Reply.Data.<init>|<init>(kotlin.ByteArray){}[0]
+
+        final val data // to.holepunch.bare.rpc/Reply.Data.data|{}data[0]
+            final fun <get-data>(): kotlin/ByteArray // to.holepunch.bare.rpc/Reply.Data.data.<get-data>|<get-data>(){}[0]
+    }
+
+    final class Stream : to.holepunch.bare.rpc/Reply { // to.holepunch.bare.rpc/Reply.Stream|null[0]
+        constructor <init>(kotlinx.coroutines.flow/Flow<kotlin/ByteArray>) // to.holepunch.bare.rpc/Reply.Stream.<init>|<init>(kotlinx.coroutines.flow.Flow<kotlin.ByteArray>){}[0]
+
+        final val body // to.holepunch.bare.rpc/Reply.Stream.body|{}body[0]
+            final fun <get-body>(): kotlinx.coroutines.flow/Flow<kotlin/ByteArray> // to.holepunch.bare.rpc/Reply.Stream.body.<get-body>|<get-body>(){}[0]
+    }
+}
+
+final class to.holepunch.bare.rpc/CommandRouter { // to.holepunch.bare.rpc/CommandRouter|null[0]
+    constructor <init>() // to.holepunch.bare.rpc/CommandRouter.<init>|<init>(){}[0]
+
+    final fun onEvent(kotlin/ULong, kotlin.coroutines/SuspendFunction1<to.holepunch.bare.rpc/IncomingEvent, kotlin/Unit>) // to.holepunch.bare.rpc/CommandRouter.onEvent|onEvent(kotlin.ULong;kotlin.coroutines.SuspendFunction1<to.holepunch.bare.rpc.IncomingEvent,kotlin.Unit>){}[0]
+    final fun onRequest(kotlin/ULong, kotlin.coroutines/SuspendFunction1<to.holepunch.bare.rpc/IncomingRequest, to.holepunch.bare.rpc/Reply>) // to.holepunch.bare.rpc/CommandRouter.onRequest|onRequest(kotlin.ULong;kotlin.coroutines.SuspendFunction1<to.holepunch.bare.rpc.IncomingRequest,to.holepunch.bare.rpc.Reply>){}[0]
+    final suspend fun dispatch(to.holepunch.bare.rpc/IncomingEvent) // to.holepunch.bare.rpc/CommandRouter.dispatch|dispatch(to.holepunch.bare.rpc.IncomingEvent){}[0]
+    final suspend fun dispatch(to.holepunch.bare.rpc/IncomingRequest): to.holepunch.bare.rpc/Reply // to.holepunch.bare.rpc/CommandRouter.dispatch|dispatch(to.holepunch.bare.rpc.IncomingRequest){}[0]
+}
+
+final class to.holepunch.bare.rpc/ConnectionClosedException : to.holepunch.bare.rpc/RpcException // to.holepunch.bare.rpc/ConnectionClosedException|null[0]
+
+final class to.holepunch.bare.rpc/Decoded { // to.holepunch.bare.rpc/Decoded|null[0]
+    constructor <init>(to.holepunch.bare.rpc/Message, kotlin/Int) // to.holepunch.bare.rpc/Decoded.<init>|<init>(to.holepunch.bare.rpc.Message;kotlin.Int){}[0]
+
+    final val message // to.holepunch.bare.rpc/Decoded.message|{}message[0]
+        final fun <get-message>(): to.holepunch.bare.rpc/Message // to.holepunch.bare.rpc/Decoded.message.<get-message>|<get-message>(){}[0]
+    final val read // to.holepunch.bare.rpc/Decoded.read|{}read[0]
+        final fun <get-read>(): kotlin/Int // to.holepunch.bare.rpc/Decoded.read.<get-read>|<get-read>(){}[0]
+}
+
+final class to.holepunch.bare.rpc/IncomingEvent { // to.holepunch.bare.rpc/IncomingEvent|null[0]
+    final val command // to.holepunch.bare.rpc/IncomingEvent.command|{}command[0]
+        final fun <get-command>(): kotlin/ULong // to.holepunch.bare.rpc/IncomingEvent.command.<get-command>|<get-command>(){}[0]
+    final val data // to.holepunch.bare.rpc/IncomingEvent.data|{}data[0]
+        final fun <get-data>(): kotlin/ByteArray // to.holepunch.bare.rpc/IncomingEvent.data.<get-data>|<get-data>(){}[0]
+}
+
+final class to.holepunch.bare.rpc/IncomingRequest { // to.holepunch.bare.rpc/IncomingRequest|null[0]
+    final val body // to.holepunch.bare.rpc/IncomingRequest.body|{}body[0]
+        final fun <get-body>(): kotlinx.coroutines.flow/Flow<kotlin/ByteArray>? // to.holepunch.bare.rpc/IncomingRequest.body.<get-body>|<get-body>(){}[0]
+    final val command // to.holepunch.bare.rpc/IncomingRequest.command|{}command[0]
+        final fun <get-command>(): kotlin/ULong // to.holepunch.bare.rpc/IncomingRequest.command.<get-command>|<get-command>(){}[0]
+    final val data // to.holepunch.bare.rpc/IncomingRequest.data|{}data[0]
+        final fun <get-data>(): kotlin/ByteArray // to.holepunch.bare.rpc/IncomingRequest.data.<get-data>|<get-data>(){}[0]
+}
+
+final class to.holepunch.bare.rpc/MalformedFrameException : to.holepunch.bare.rpc/RpcException // to.holepunch.bare.rpc/MalformedFrameException|null[0]
+
+final class to.holepunch.bare.rpc/RemoteError { // to.holepunch.bare.rpc/RemoteError|null[0]
+    constructor <init>(kotlin/String, kotlin/String, kotlin/Long) // to.holepunch.bare.rpc/RemoteError.<init>|<init>(kotlin.String;kotlin.String;kotlin.Long){}[0]
+
+    final val code // to.holepunch.bare.rpc/RemoteError.code|{}code[0]
+        final fun <get-code>(): kotlin/String // to.holepunch.bare.rpc/RemoteError.code.<get-code>|<get-code>(){}[0]
+    final val errno // to.holepunch.bare.rpc/RemoteError.errno|{}errno[0]
+        final fun <get-errno>(): kotlin/Long // to.holepunch.bare.rpc/RemoteError.errno.<get-errno>|<get-errno>(){}[0]
+    final val message // to.holepunch.bare.rpc/RemoteError.message|{}message[0]
+        final fun <get-message>(): kotlin/String // to.holepunch.bare.rpc/RemoteError.message.<get-message>|<get-message>(){}[0]
+
+    final fun component1(): kotlin/String // to.holepunch.bare.rpc/RemoteError.component1|component1(){}[0]
+    final fun component2(): kotlin/String // to.holepunch.bare.rpc/RemoteError.component2|component2(){}[0]
+    final fun component3(): kotlin/Long // to.holepunch.bare.rpc/RemoteError.component3|component3(){}[0]
+    final fun copy(kotlin/String = ..., kotlin/String = ..., kotlin/Long = ...): to.holepunch.bare.rpc/RemoteError // to.holepunch.bare.rpc/RemoteError.copy|copy(kotlin.String;kotlin.String;kotlin.Long){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // to.holepunch.bare.rpc/RemoteError.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // to.holepunch.bare.rpc/RemoteError.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // to.holepunch.bare.rpc/RemoteError.toString|toString(){}[0]
+}
+
+final class to.holepunch.bare.rpc/RemoteException : to.holepunch.bare.rpc/RpcException { // to.holepunch.bare.rpc/RemoteException|null[0]
+    constructor <init>(kotlin/String, kotlin/String, kotlin/Long) // to.holepunch.bare.rpc/RemoteException.<init>|<init>(kotlin.String;kotlin.String;kotlin.Long){}[0]
+
+    final val code // to.holepunch.bare.rpc/RemoteException.code|{}code[0]
+        final fun <get-code>(): kotlin/String // to.holepunch.bare.rpc/RemoteException.code.<get-code>|<get-code>(){}[0]
+    final val errno // to.holepunch.bare.rpc/RemoteException.errno|{}errno[0]
+        final fun <get-errno>(): kotlin/Long // to.holepunch.bare.rpc/RemoteException.errno.<get-errno>|<get-errno>(){}[0]
+}
+
+final class to.holepunch.bare.rpc/Rpc { // to.holepunch.bare.rpc/Rpc|null[0]
+    constructor <init>(kotlinx.coroutines.flow/Flow<kotlin/ByteArray>, kotlin.coroutines/SuspendFunction1<kotlin/ByteArray, kotlin/Unit>, kotlinx.coroutines/CoroutineScope, kotlin.coroutines/SuspendFunction1<to.holepunch.bare.rpc/IncomingEvent, kotlin/Unit> = ..., kotlin.coroutines/SuspendFunction1<to.holepunch.bare.rpc/IncomingRequest, to.holepunch.bare.rpc/Reply> = ..., kotlin/UInt = ..., kotlin/UInt = ...) // to.holepunch.bare.rpc/Rpc.<init>|<init>(kotlinx.coroutines.flow.Flow<kotlin.ByteArray>;kotlin.coroutines.SuspendFunction1<kotlin.ByteArray,kotlin.Unit>;kotlinx.coroutines.CoroutineScope;kotlin.coroutines.SuspendFunction1<to.holepunch.bare.rpc.IncomingEvent,kotlin.Unit>;kotlin.coroutines.SuspendFunction1<to.holepunch.bare.rpc.IncomingRequest,to.holepunch.bare.rpc.Reply>;kotlin.UInt;kotlin.UInt){}[0]
+
+    final fun requestFlow(kotlin/ULong, kotlin/ByteArray): kotlinx.coroutines.flow/Flow<kotlin/ByteArray> // to.holepunch.bare.rpc/Rpc.requestFlow|requestFlow(kotlin.ULong;kotlin.ByteArray){}[0]
+    final fun requestFlow(kotlin/ULong, kotlinx.coroutines.flow/Flow<kotlin/ByteArray>): kotlinx.coroutines.flow/Flow<kotlin/ByteArray> // to.holepunch.bare.rpc/Rpc.requestFlow|requestFlow(kotlin.ULong;kotlinx.coroutines.flow.Flow<kotlin.ByteArray>){}[0]
+    final suspend fun close() // to.holepunch.bare.rpc/Rpc.close|close(){}[0]
+    final suspend fun event(kotlin/ULong, kotlin/ByteArray) // to.holepunch.bare.rpc/Rpc.event|event(kotlin.ULong;kotlin.ByteArray){}[0]
+    final suspend fun request(kotlin/ULong, kotlin/ByteArray): kotlin/ByteArray // to.holepunch.bare.rpc/Rpc.request|request(kotlin.ULong;kotlin.ByteArray){}[0]
+    final suspend fun request(kotlin/ULong, kotlinx.coroutines.flow/Flow<kotlin/ByteArray>): kotlin/ByteArray // to.holepunch.bare.rpc/Rpc.request|request(kotlin.ULong;kotlinx.coroutines.flow.Flow<kotlin.ByteArray>){}[0]
+}
+
+final class to.holepunch.bare.rpc/StreamOverflowException : to.holepunch.bare.rpc/RpcException // to.holepunch.bare.rpc/StreamOverflowException|null[0]
+
+final class to.holepunch.bare.rpc/UnexpectedStreamException : to.holepunch.bare.rpc/RpcException // to.holepunch.bare.rpc/UnexpectedStreamException|null[0]
+
+final class to.holepunch.bare.rpc/UnknownMessageException : to.holepunch.bare.rpc/RpcException { // to.holepunch.bare.rpc/UnknownMessageException|null[0]
+    final val type // to.holepunch.bare.rpc/UnknownMessageException.type|{}type[0]
+        final fun <get-type>(): kotlin/ULong // to.holepunch.bare.rpc/UnknownMessageException.type.<get-type>|<get-type>(){}[0]
+}
+
+sealed class to.holepunch.bare.rpc/RpcException : kotlin/Exception // to.holepunch.bare.rpc/RpcException|null[0]
+
+final object to.holepunch.bare.rpc/Messages { // to.holepunch.bare.rpc/Messages|null[0]
+    final fun decode(kotlin/ByteArray): to.holepunch.bare.rpc/Decoded // to.holepunch.bare.rpc/Messages.decode|decode(kotlin.ByteArray){}[0]
+    final fun encode(to.holepunch.bare.rpc/Message): kotlin/ByteArray // to.holepunch.bare.rpc/Messages.encode|encode(to.holepunch.bare.rpc.Message){}[0]
+}

@@ -19,5 +19,3 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "bare-rpc-kotlin"
-
-include("stdlib-check")
