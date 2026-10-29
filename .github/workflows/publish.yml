@@ -1,0 +1,14 @@
+name: Publish
+on:
+  push:
+    tags:
+      - v*
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    name: Publish
+    steps:
+      - uses: holepunchto/actions/checkout@v1
+      - uses: holepunchto/actions/publish-jitpack@v1
