@@ -1,51 +1,39 @@
-public final class to/holepunch/barerpc/BareRpc {
-	public synthetic fun <init> (Lkotlin/jvm/functions/Function2;Lkotlin/jvm/functions/Function2;Lkotlin/jvm/functions/Function2;IILkotlinx/coroutines/CoroutineScope;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
-	public synthetic fun <init> (Lkotlin/jvm/functions/Function2;Lkotlin/jvm/functions/Function2;Lkotlin/jvm/functions/Function2;IILkotlinx/coroutines/CoroutineScope;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
-	public final fun close (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public final fun event-E0BElUM (J[BLkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public final fun receive ([BLkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public final fun request-E0BElUM (JLkotlinx/coroutines/flow/Flow;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public final fun request-E0BElUM (J[BLkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public final fun requestFlow-4PLdz1A (JLkotlinx/coroutines/flow/Flow;)Lkotlinx/coroutines/flow/Flow;
-	public final fun requestFlow-4PLdz1A (J[B)Lkotlinx/coroutines/flow/Flow;
-}
-
-public final class to/holepunch/barerpc/CommandRouter {
+public final class to/holepunch/bare/rpc/CommandRouter {
 	public fun <init> ()V
-	public final fun dispatch (Lto/holepunch/barerpc/IncomingEvent;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public final fun dispatch (Lto/holepunch/barerpc/IncomingRequest;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun dispatch (Lto/holepunch/bare/rpc/IncomingEvent;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun dispatch (Lto/holepunch/bare/rpc/IncomingRequest;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun onEvent-4PLdz1A (JLkotlin/jvm/functions/Function2;)V
 	public final fun onRequest-4PLdz1A (JLkotlin/jvm/functions/Function2;)V
 }
 
-public final class to/holepunch/barerpc/ConnectionClosedException : to/holepunch/barerpc/RpcException {
+public final class to/holepunch/bare/rpc/ConnectionClosedException : to/holepunch/bare/rpc/RpcException {
 }
 
-public final class to/holepunch/barerpc/Decoded {
-	public fun <init> (Lto/holepunch/barerpc/Message;I)V
-	public final fun getMessage ()Lto/holepunch/barerpc/Message;
+public final class to/holepunch/bare/rpc/Decoded {
+	public fun <init> (Lto/holepunch/bare/rpc/Message;I)V
+	public final fun getMessage ()Lto/holepunch/bare/rpc/Message;
 	public final fun getRead ()I
 }
 
-public final class to/holepunch/barerpc/IncomingEvent {
+public final class to/holepunch/bare/rpc/IncomingEvent {
 	public final fun getCommand-s-VKNKU ()J
 	public final fun getData ()[B
 }
 
-public final class to/holepunch/barerpc/IncomingRequest {
+public final class to/holepunch/bare/rpc/IncomingRequest {
 	public final fun getBody ()Lkotlinx/coroutines/flow/Flow;
 	public final fun getCommand-s-VKNKU ()J
 	public final fun getData ()[B
 }
 
-public final class to/holepunch/barerpc/MalformedFrameException : to/holepunch/barerpc/RpcException {
+public final class to/holepunch/bare/rpc/MalformedFrameException : to/holepunch/bare/rpc/RpcException {
 }
 
-public abstract interface class to/holepunch/barerpc/Message {
+public abstract interface class to/holepunch/bare/rpc/Message {
 	public abstract fun getId-s-VKNKU ()J
 }
 
-public final class to/holepunch/barerpc/Message$Request : to/holepunch/barerpc/Message {
+public final class to/holepunch/bare/rpc/Message$Request : to/holepunch/bare/rpc/Message {
 	public synthetic fun <init> (JJJ[BLkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getCommand-s-VKNKU ()J
@@ -55,39 +43,39 @@ public final class to/holepunch/barerpc/Message$Request : to/holepunch/barerpc/M
 	public fun hashCode ()I
 }
 
-public final class to/holepunch/barerpc/Message$Response : to/holepunch/barerpc/Message {
-	public synthetic fun <init> (JJ[BLto/holepunch/barerpc/RemoteError;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+public final class to/holepunch/bare/rpc/Message$Response : to/holepunch/bare/rpc/Message {
+	public synthetic fun <init> (JJ[BLto/holepunch/bare/rpc/RemoteError;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getData ()[B
-	public final fun getError ()Lto/holepunch/barerpc/RemoteError;
+	public final fun getError ()Lto/holepunch/bare/rpc/RemoteError;
 	public fun getId-s-VKNKU ()J
 	public final fun getStream-s-VKNKU ()J
 	public fun hashCode ()I
 }
 
-public final class to/holepunch/barerpc/Message$Stream : to/holepunch/barerpc/Message {
-	public synthetic fun <init> (JJ[BLto/holepunch/barerpc/RemoteError;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+public final class to/holepunch/bare/rpc/Message$Stream : to/holepunch/bare/rpc/Message {
+	public synthetic fun <init> (JJ[BLto/holepunch/bare/rpc/RemoteError;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getData ()[B
-	public final fun getError ()Lto/holepunch/barerpc/RemoteError;
+	public final fun getError ()Lto/holepunch/bare/rpc/RemoteError;
 	public final fun getFlags-s-VKNKU ()J
 	public fun getId-s-VKNKU ()J
 	public fun hashCode ()I
 }
 
-public final class to/holepunch/barerpc/Messages {
-	public static final field INSTANCE Lto/holepunch/barerpc/Messages;
-	public final fun decode ([B)Lto/holepunch/barerpc/Decoded;
-	public final fun encode (Lto/holepunch/barerpc/Message;)[B
+public final class to/holepunch/bare/rpc/Messages {
+	public static final field INSTANCE Lto/holepunch/bare/rpc/Messages;
+	public final fun decode ([B)Lto/holepunch/bare/rpc/Decoded;
+	public final fun encode (Lto/holepunch/bare/rpc/Message;)[B
 }
 
-public final class to/holepunch/barerpc/RemoteError {
+public final class to/holepunch/bare/rpc/RemoteError {
 	public fun <init> (Ljava/lang/String;Ljava/lang/String;J)V
 	public final fun component1 ()Ljava/lang/String;
 	public final fun component2 ()Ljava/lang/String;
 	public final fun component3 ()J
-	public final fun copy (Ljava/lang/String;Ljava/lang/String;J)Lto/holepunch/barerpc/RemoteError;
-	public static synthetic fun copy$default (Lto/holepunch/barerpc/RemoteError;Ljava/lang/String;Ljava/lang/String;JILjava/lang/Object;)Lto/holepunch/barerpc/RemoteError;
+	public final fun copy (Ljava/lang/String;Ljava/lang/String;J)Lto/holepunch/bare/rpc/RemoteError;
+	public static synthetic fun copy$default (Lto/holepunch/bare/rpc/RemoteError;Ljava/lang/String;Ljava/lang/String;JILjava/lang/Object;)Lto/holepunch/bare/rpc/RemoteError;
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getCode ()Ljava/lang/String;
 	public final fun getErrno ()J
@@ -96,36 +84,47 @@ public final class to/holepunch/barerpc/RemoteError {
 	public fun toString ()Ljava/lang/String;
 }
 
-public final class to/holepunch/barerpc/RemoteException : to/holepunch/barerpc/RpcException {
+public final class to/holepunch/bare/rpc/RemoteException : to/holepunch/bare/rpc/RpcException {
 	public fun <init> (Ljava/lang/String;Ljava/lang/String;J)V
 	public final fun getCode ()Ljava/lang/String;
 	public final fun getErrno ()J
 }
 
-public abstract interface class to/holepunch/barerpc/Reply {
+public abstract interface class to/holepunch/bare/rpc/Reply {
 }
 
-public final class to/holepunch/barerpc/Reply$Data : to/holepunch/barerpc/Reply {
+public final class to/holepunch/bare/rpc/Reply$Data : to/holepunch/bare/rpc/Reply {
 	public fun <init> ([B)V
 	public final fun getData ()[B
 }
 
-public final class to/holepunch/barerpc/Reply$Stream : to/holepunch/barerpc/Reply {
+public final class to/holepunch/bare/rpc/Reply$Stream : to/holepunch/bare/rpc/Reply {
 	public fun <init> (Lkotlinx/coroutines/flow/Flow;)V
 	public final fun getBody ()Lkotlinx/coroutines/flow/Flow;
 }
 
-public abstract class to/holepunch/barerpc/RpcException : java/lang/Exception {
+public final class to/holepunch/bare/rpc/Rpc {
+	public synthetic fun <init> (Lkotlinx/coroutines/flow/Flow;Lkotlin/jvm/functions/Function2;Lkotlinx/coroutines/CoroutineScope;Lkotlin/jvm/functions/Function2;Lkotlin/jvm/functions/Function2;IIILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Lkotlinx/coroutines/flow/Flow;Lkotlin/jvm/functions/Function2;Lkotlinx/coroutines/CoroutineScope;Lkotlin/jvm/functions/Function2;Lkotlin/jvm/functions/Function2;IILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun close (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun event-E0BElUM (J[BLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun request-E0BElUM (JLkotlinx/coroutines/flow/Flow;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun request-E0BElUM (J[BLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun requestFlow-4PLdz1A (JLkotlinx/coroutines/flow/Flow;)Lkotlinx/coroutines/flow/Flow;
+	public final fun requestFlow-4PLdz1A (J[B)Lkotlinx/coroutines/flow/Flow;
+}
+
+public abstract class to/holepunch/bare/rpc/RpcException : java/lang/Exception {
 	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/Throwable;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 }
 
-public final class to/holepunch/barerpc/StreamOverflowException : to/holepunch/barerpc/RpcException {
+public final class to/holepunch/bare/rpc/StreamOverflowException : to/holepunch/bare/rpc/RpcException {
 }
 
-public final class to/holepunch/barerpc/UnexpectedStreamException : to/holepunch/barerpc/RpcException {
+public final class to/holepunch/bare/rpc/UnexpectedStreamException : to/holepunch/bare/rpc/RpcException {
 }
 
-public final class to/holepunch/barerpc/UnknownMessageException : to/holepunch/barerpc/RpcException {
+public final class to/holepunch/bare/rpc/UnknownMessageException : to/holepunch/bare/rpc/RpcException {
 	public final fun getType-s-VKNKU ()J
 }
 

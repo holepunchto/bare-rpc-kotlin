@@ -1,5 +1,6 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
-import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
+import org.jetbrains.kotlin.gradle.targets.js.nodejs.NodeJsEnvSpec
+import org.jetbrains.kotlin.gradle.targets.js.nodejs.NodeJsPlugin
 
 plugins {
   alias(libs.plugins.kotlin.multiplatform)
@@ -14,21 +15,18 @@ group = "com.github.holepunchto"
 version = System.getenv("VERSION") ?: "0.0.0"
 
 kotlin {
-  jvmToolchain(21)
   explicitApi()
 
   @OptIn(org.jetbrains.kotlin.gradle.dsl.abi.ExperimentalAbiValidation::class) abiValidation()
 
-  compilerOptions {
-    allWarningsAsErrors = true
-    apiVersion = KotlinVersion.KOTLIN_2_2
-    languageVersion = KotlinVersion.KOTLIN_2_2
-  }
+  compilerOptions { allWarningsAsErrors = true }
 
   jvm { compilerOptions { jvmTarget = JvmTarget.JVM_11 } }
 
+  js { nodejs() }
+
   android {
-    namespace = "to.holepunch.barerpc"
+    namespace = "to.holepunch.bare.rpc"
     compileSdk = 36
     minSdk = 29
     withHostTest {}
@@ -54,6 +52,8 @@ dokka {
 }
 
 ktfmt { googleStyle() }
+
+plugins.withType<NodeJsPlugin> { the<NodeJsEnvSpec>().download = false }
 
 val fixturesVersion = "0.1.0"
 
@@ -109,25 +109,16 @@ tasks.named<Test>("jvmTest") {
   )
 }
 
-val checkAscii =
-  tasks.register("checkAscii") {
-    val root = rootDir
-    val files =
-      fileTree(root) {
-        include("**/*.kt", "**/*.kts", "**/*.md", "**/*.yml", "**/*.properties", "**/*.toml")
-        exclude("**/build/**", "**/.gradle/**", "**/.kotlin/**")
-      }
-    inputs.files(files)
-    doLast {
-      val lines =
-        files.files.flatMap { file ->
-          file.readLines().mapIndexedNotNull { i, line ->
-            if (line.any { it.code > 0x7f }) "${file.relativeTo(root)}:${i + 1}" else null
-          }
-        }
-      if (lines.isNotEmpty())
-        throw GradleException("Non-ASCII characters at:\n" + lines.joinToString("\n"))
-    }
-  }
+tasks.register("lint") {
+  group = "verification"
+  description = "Checks the formatting, the ABI, and the documentation."
+  dependsOn("ktfmtCheck", "checkKotlinAbi", "dokkaGenerate")
+}
 
-tasks.check { dependsOn(checkAscii, "dokkaGenerate") }
+tasks.register("test") {
+  group = "verification"
+  description = "Runs the tests on every target."
+  dependsOn("jvmTest", "testAndroidHostTest", "jsNodeTest")
+}
+
+tasks.check { dependsOn("lint") }

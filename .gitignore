@@ -3,3 +3,4 @@ build/
 .kotlin/
 /.idea
 local.properties
+kotlin-js-store/
