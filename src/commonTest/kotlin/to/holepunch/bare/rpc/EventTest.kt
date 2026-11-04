@@ -4,6 +4,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertSame
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.test.runTest
 
 class EventTest {
@@ -13,7 +14,7 @@ class EventTest {
   fun `an event goes out as one frame with id 0`() = runTest {
     val remote = Remote(this)
     val sent = mutableListOf<String>()
-    Rpc(remote.data, write = { sent += it.toHexString() }, scope = backgroundScope)
+    Rpc(TestTransport(remote.data, { sent += it.toHexString() }), scope = backgroundScope)
       .event(7u, "hi".encodeToByteArray())
     assertEquals(listOf(hi), sent)
   }
@@ -23,8 +24,7 @@ class EventTest {
     val remote = Remote(this)
     val events = mutableListOf<Pair<ULong, String>>()
     Rpc(
-      remote.data,
-      write = {},
+      TestTransport(remote.data),
       onEvent = { events += it.command to it.data.decodeToString() },
       scope = backgroundScope,
     )
@@ -37,7 +37,7 @@ class EventTest {
     val remote = Remote(this)
     val events = mutableListOf<ULong>()
     val rpc =
-      Rpc(remote.data, write = {}, onEvent = { events += it.command }, scope = backgroundScope)
+      Rpc(TestTransport(remote.data), onEvent = { events += it.command }, scope = backgroundScope)
     val bytes = hi.hexToByteArray()
     remote.send(bytes.copyOfRange(0, 6))
     assertEquals(emptyList(), events)
@@ -50,20 +50,20 @@ class EventTest {
     val remote = Remote(this)
     val events = mutableListOf<ULong>()
     val rpc =
-      Rpc(remote.data, write = {}, onEvent = { events += it.command }, scope = backgroundScope)
+      Rpc(TestTransport(remote.data), onEvent = { events += it.command }, scope = backgroundScope)
     remote.send("020000000100".hexToByteArray())
-    val failure = assertFailsWith<MalformedFrameException> { rpc.event(0u, ByteArray(0)) }
+    val failure = assertFailsWith<MalformedFrameException> { rpc.request(0u, ByteArray(0)) }
     remote.send(hi.hexToByteArray())
-    assertSame(failure, assertFailsWith<MalformedFrameException> { rpc.event(0u, ByteArray(0)) })
+    assertSame(failure, assertFailsWith<MalformedFrameException> { rpc.request(0u, ByteArray(0)) })
     assertEquals(emptyList(), events)
   }
 
   @Test
   fun `a frame over the cap fails receive`() = runTest {
     val remote = Remote(this)
-    val rpc = Rpc(remote.data, write = {}, maxFrameSize = 8u, scope = backgroundScope)
+    val rpc = Rpc(TestTransport(remote.data), maxFrameSize = 8, scope = backgroundScope)
     remote.send("05000000".hexToByteArray())
-    assertFailsWith<MalformedFrameException> { rpc.event(0u, ByteArray(0)) }
+    assertFailsWith<FrameTooLargeException> { rpc.request(0u, ByteArray(0)) }
   }
 
   @Test
@@ -71,17 +71,16 @@ class EventTest {
     val remote = Remote(this)
     val rpc =
       Rpc(
-        remote.data,
-        write = {},
+        TestTransport(remote.data),
         onEvent = { error("handler failed") },
         scope = backgroundScope,
       )
     val failure = run {
       remote.send(hi.hexToByteArray())
-      assertFailsWith<IllegalStateException> { rpc.event(0u, ByteArray(0)) }
+      assertFailsWith<IllegalStateException> { rpc.request(0u, ByteArray(0)) }
     }
     remote.send(hi.hexToByteArray())
-    assertSame(failure, assertFailsWith<IllegalStateException> { rpc.event(0u, ByteArray(0)) })
+    assertSame(failure, assertFailsWith<IllegalStateException> { rpc.request(0u, ByteArray(0)) })
   }
 
   @Test
@@ -89,20 +88,19 @@ class EventTest {
     val remote = Remote(this)
     val events = mutableListOf<ULong>()
     val rpc =
-      Rpc(remote.data, write = {}, onEvent = { events += it.command }, scope = backgroundScope)
+      Rpc(TestTransport(remote.data), onEvent = { events += it.command }, scope = backgroundScope)
     remote.send((hi + "ffffffff").hexToByteArray())
-    assertFailsWith<MalformedFrameException> { rpc.event(0u, ByteArray(0)) }
+    assertFailsWith<FrameTooLargeException> { rpc.request(0u, ByteArray(0)) }
     assertEquals(listOf(7uL), events)
   }
 
   @Test
-  fun `an event after a failure throws the same exception and sends nothing`() = runTest {
+  fun `an event after a failure is dropped`() = runTest {
     val remote = Remote(this)
     val sent = mutableListOf<ByteArray>()
-    val rpc = Rpc(remote.data, write = { sent += it }, scope = backgroundScope)
+    val rpc = Rpc(TestTransport(remote.data, { sent += it }), scope = backgroundScope)
     remote.send("020000000100".hexToByteArray())
-    val failure = assertFailsWith<MalformedFrameException> { rpc.event(0u, ByteArray(0)) }
-    assertSame(failure, assertFailsWith<MalformedFrameException> { rpc.event(7u, ByteArray(0)) })
+    rpc.event(7u, ByteArray(0))
     assertEquals(emptyList(), sent)
   }
 
@@ -111,9 +109,37 @@ class EventTest {
     val remote = Remote(this)
     val events = mutableListOf<ULong>()
     val rpc =
-      Rpc(remote.data, write = {}, onEvent = { events += it.command }, scope = backgroundScope)
+      Rpc(TestTransport(remote.data), onEvent = { events += it.command }, scope = backgroundScope)
     remote.send("0400000001000701".hexToByteArray())
-    assertFailsWith<MalformedFrameException> { rpc.event(0u, ByteArray(0)) }
+    assertFailsWith<MalformedFrameException> { rpc.request(0u, ByteArray(0)) }
     assertEquals(emptyList(), events)
+  }
+
+  @Test
+  fun `sizes that are not positive are rejected`() = runTest {
+    assertFailsWith<IllegalArgumentException> {
+      Rpc(TestTransport(emptyFlow()), maxFrameSize = 0, scope = backgroundScope)
+    }
+    assertFailsWith<IllegalArgumentException> {
+      Rpc(TestTransport(emptyFlow()), maxBufferedBytes = 0, scope = backgroundScope)
+    }
+  }
+
+  @Test
+  fun `an event handler can await a request to the same peer`() = runTest {
+    val remote = Remote(this)
+    val sent = mutableListOf<String>()
+    val replies = mutableListOf<String>()
+    lateinit var rpc: Rpc
+    rpc =
+      Rpc(
+        TestTransport(remote.data, { sent += it.toHexString() }),
+        onEvent = { replies += rpc.request(7u, it.data).decodeToString() },
+        scope = backgroundScope,
+      )
+    remote.send(hi.hexToByteArray())
+    assertEquals(listOf("0700000001010700026869"), sent) // request id 1, command 7, "hi"
+    remote.send("0700000002010000026f6b".hexToByteArray()) // response id 1, "ok"
+    assertEquals(listOf("ok"), replies)
   }
 }

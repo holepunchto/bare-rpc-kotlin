@@ -1,10 +1,10 @@
 package to.holepunch.bare.rpc
 
 /**
- * Sends each request and event to the handler registered for its command. Pass [dispatch] to [Rpc]
- * as its `onRequest` and `onEvent`, and register every handler before creating it.
+ * A [Handler] that sends each request and event to the handler registered for its command. Pass it
+ * to [Rpc] as its `handler`, and register every handler before creating the [Rpc].
  */
-public class CommandRouter {
+public class CommandRouter : Handler {
   private val requestHandlers = mutableMapOf<ULong, suspend (IncomingRequest) -> Reply>()
   private val eventHandlers = mutableMapOf<ULong, suspend (IncomingEvent) -> Unit>()
 
@@ -21,15 +21,15 @@ public class CommandRouter {
   /**
    * Answers [request] with the handler for its command.
    *
-   * @throws RemoteException with code `ERR_UNKNOWN_COMMAND` if no handler is registered for it.
+   * @throws RemoteException with code `UNKNOWN_COMMAND` if no handler is registered for it.
    */
-  public suspend fun dispatch(request: IncomingRequest): Reply {
+  override suspend fun handle(request: IncomingRequest): Reply {
     val handler = requestHandlers[request.command] ?: throw unknownCommand(request.command)
     return handler(request)
   }
 
   /** Delivers [event] to the handler for its command, and drops it if there is none. */
-  public suspend fun dispatch(event: IncomingEvent) {
+  override suspend fun handle(event: IncomingEvent) {
     eventHandlers[event.command]?.invoke(event)
   }
 }

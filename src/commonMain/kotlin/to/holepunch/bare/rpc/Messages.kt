@@ -38,6 +38,10 @@ public sealed interface Message {
 
     /** Consistent with [equals]. */
     override fun hashCode(): Int = listOf(id, command, stream, data.contentHashCode()).hashCode()
+
+    /** Lists every field, [data] by content. */
+    override fun toString(): String =
+      "Request(id=$id, command=$command, stream=$stream, data=${data?.contentToString()})"
   }
 
   /**
@@ -63,6 +67,10 @@ public sealed interface Message {
 
     /** Consistent with [equals]. */
     override fun hashCode(): Int = listOf(id, stream, data.contentHashCode(), error).hashCode()
+
+    /** Lists every field, [data] by content. */
+    override fun toString(): String =
+      "Response(id=$id, stream=$stream, data=${data?.contentToString()}, error=$error)"
   }
 
   /**
@@ -88,6 +96,10 @@ public sealed interface Message {
 
     /** Consistent with [equals]. */
     override fun hashCode(): Int = listOf(id, flags, data.contentHashCode(), error).hashCode()
+
+    /** Lists every field, [data] by content. */
+    override fun toString(): String =
+      "Stream(id=$id, flags=$flags, data=${data?.contentToString()}, error=$error)"
   }
 }
 
@@ -95,7 +107,7 @@ public sealed interface Message {
  * The error a peer sends in place of a reply or to close a stream.
  *
  * @property message the error's message.
- * @property code the error's code, such as `ERR_UNKNOWN_COMMAND`.
+ * @property code the error's code, such as `UNKNOWN_COMMAND`.
  * @property errno the error's number.
  */
 public data class RemoteError(val message: String, val code: String, val errno: Long)
@@ -104,9 +116,9 @@ public data class RemoteError(val message: String, val code: String, val errno: 
  * The result of [Messages.decode].
  *
  * @property message the decoded message.
- * @property read the number of bytes the frame took, length prefix included.
+ * @property bytesRead the number of bytes the frame took, length prefix included.
  */
-public class Decoded(public val message: Message, public val read: Int)
+public class Decoded(public val message: Message, public val bytesRead: Int)
 
 /** The bare-rpc frame codec: a uint32 little-endian length followed by the message. */
 public object Messages {
@@ -186,16 +198,22 @@ internal const val STREAM_ERROR = 0x80uL
 internal const val STREAM_REQUEST = 0x100uL
 internal const val STREAM_RESPONSE = 0x200uL
 
-internal val streamEvents =
+// Every event a valid peer sends, apart from the direction it travels in.
+private val streamEvents =
   listOf(
     STREAM_OPEN,
     STREAM_CLOSE,
+    STREAM_CLOSE or STREAM_ERROR,
     STREAM_PAUSE,
     STREAM_RESUME,
     STREAM_DATA,
     STREAM_END,
     STREAM_DESTROY,
+    STREAM_DESTROY or STREAM_ERROR,
   )
+
+internal val streamFlags =
+  streamEvents.flatMap { listOf(it or STREAM_REQUEST, it or STREAM_RESPONSE) }.toSet()
 
 private val body: Codec<Message> =
   object : Codec<Message> {
@@ -214,6 +232,9 @@ private val body: Codec<Message> =
         }
         RESPONSE -> {
           val hasError = bool.decode(state)
+          if (state.buffer[state.start - 1].toUByte() > 1u) {
+            throw MalformedFrameException("a response's error flag must be 0 or 1")
+          }
           val stream = uint.decode(state)
           if (hasError) Message.Response(id, stream, null, remoteError.decode(state))
           else Message.Response(id, stream, if (stream == 0uL) buffer.decode(state) else null, null)

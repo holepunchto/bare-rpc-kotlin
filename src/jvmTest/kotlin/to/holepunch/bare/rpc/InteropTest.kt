@@ -44,10 +44,7 @@ class InteropTest {
   @Test
   fun `a command Kotlin does not know goes back to the JS peer as an error`() = withPeer { rpc ->
     val error = assertFailsWith<RemoteException> { rpc.request(2u, ByteArray(0)) }
-    assertEquals(
-      Triple("Unknown command 7", "ERR_UNKNOWN_COMMAND", 0L),
-      Triple(error.message, error.code, error.errno),
-    )
+    assertEquals("UNKNOWN_COMMAND" to 0L, error.code to error.errno)
   }
 
   @Test

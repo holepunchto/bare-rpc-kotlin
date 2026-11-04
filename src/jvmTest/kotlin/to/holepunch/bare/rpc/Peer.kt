@@ -21,27 +21,31 @@ internal fun withPeer(
     ProcessBuilder("node", peerScript).redirectError(ProcessBuilder.Redirect.INHERIT).start()
   val input = process.outputStream
   val closing = AtomicBoolean(false)
-  val write: suspend (ByteArray) -> Unit = { bytes ->
-    withContext(Dispatchers.IO) {
-      input.write(bytes)
-      input.flush()
-    }
-  }
-  val data = flow {
-    val buffer = ByteArray(64 * 1024)
-    while (true) {
-      val read = process.inputStream.read(buffer)
-      if (read < 0) {
-        check(closing.get()) { "peer exited with ${process.waitFor()}" }
-        break
-      }
-      emit(buffer.copyOf(read))
-    }
-  }
-    .flowOn(Dispatchers.IO)
+  val transport =
+    Transport(
+      flow {
+          val buffer = ByteArray(64 * 1024)
+          while (true) {
+            val read = process.inputStream.read(buffer)
+            if (read < 0) {
+              check(closing.get()) { "peer exited with ${process.waitFor()}" }
+              break
+            }
+            emit(buffer.copyOf(read))
+          }
+        }
+        .flowOn(Dispatchers.IO),
+      { data ->
+        withContext(Dispatchers.IO) {
+          input.write(data)
+          input.flush()
+        }
+      },
+      {},
+    )
   val rpc =
-    if (onRequest == null) Rpc(data, write, this, onEvent)
-    else Rpc(data, write, this, onEvent, onRequest)
+    if (onRequest == null) Rpc(transport, this, onEvent = onEvent)
+    else Rpc(transport, this, onRequest, onEvent)
   try {
     withTimeout(10.seconds) { block(rpc) }
   } finally {

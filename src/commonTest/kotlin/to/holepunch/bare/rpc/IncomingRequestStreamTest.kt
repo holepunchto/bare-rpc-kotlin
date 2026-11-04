@@ -4,9 +4,11 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.flow.first
@@ -15,6 +17,7 @@ import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.yield
+import to.holepunch.compactEncoding.encode
 
 class IncomingRequestStreamTest {
   private val big =
@@ -48,8 +51,7 @@ class IncomingRequestStreamTest {
     val sent = mutableListOf<String>()
     val rpc =
       Rpc(
-        remote.data,
-        write = { sent += it.toHexString() },
+        TestTransport(remote.data, { sent += it.toHexString() }),
         onRequest = {
           it.body!!.collect {}
           Reply.Data(ByteArray(0))
@@ -68,8 +70,7 @@ class IncomingRequestStreamTest {
     val sent = mutableListOf<String>()
     val rpc =
       Rpc(
-        remote.data,
-        write = { sent += it.toHexString() },
+        TestTransport(remote.data, { sent += it.toHexString() }),
         onRequest = { Reply.Data(it.body!!.fold(ByteArray(0)) { a, b -> a + b }) },
         scope = backgroundScope,
       )
@@ -87,8 +88,7 @@ class IncomingRequestStreamTest {
     val sent = mutableListOf<String>()
     val rpc =
       Rpc(
-        remote.data,
-        write = { sent += it.toHexString() },
+        TestTransport(remote.data, { sent += it.toHexString() }),
         onRequest = { Reply.Data(it.body!!.fold(ByteArray(0)) { a, b -> a + b }) },
         scope = backgroundScope,
       )
@@ -106,8 +106,7 @@ class IncomingRequestStreamTest {
     val caught = CompletableDeferred<Throwable>()
     val rpc =
       Rpc(
-        remote.data,
-        write = {},
+        TestTransport(remote.data),
         onRequest = {
           try {
             it.body!!.collect {}
@@ -130,8 +129,7 @@ class IncomingRequestStreamTest {
     val seen = CompletableDeferred<Int>()
     val rpc =
       Rpc(
-        remote.data,
-        write = {},
+        TestTransport(remote.data),
         onRequest = {
           seen.complete(it.data.size)
           it.body!!.collect {}
@@ -152,8 +150,7 @@ class IncomingRequestStreamTest {
     val sent = mutableListOf<String>()
     val rpc =
       Rpc(
-        remote.data,
-        write = { sent += it.toHexString() },
+        TestTransport(remote.data, { sent += it.toHexString() }),
         onRequest = {
           it.body!!.collect { release.await() }
           Reply.Data(ByteArray(0))
@@ -176,8 +173,7 @@ class IncomingRequestStreamTest {
     val sent = mutableListOf<String>()
     val rpc =
       Rpc(
-        remote.data,
-        write = { sent += it.toHexString() },
+        TestTransport(remote.data, { sent += it.toHexString() }),
         onRequest = {
           it.body!!.collect { release.await() }
           Reply.Data(ByteArray(0))
@@ -196,21 +192,45 @@ class IncomingRequestStreamTest {
   }
 
   @Test
-  fun `close still hands over a paused body's buffered chunks`() = runTest {
+  fun `a failure cancels a handler still reading a streamed body`() = runTest {
     val remote = Remote(this)
-    val release = CompletableDeferred<Unit>()
+    val stopped = CompletableDeferred<Unit>()
+    Rpc(
+      TestTransport(remote.data),
+      onRequest = {
+        try {
+          it.body!!.collect { awaitCancellation() }
+        } finally {
+          stopped.complete(Unit)
+        }
+        Reply.Data(ByteArray(0))
+      },
+      scope = backgroundScope,
+    )
+    remote.send(open.hexToByteArray())
+    yield()
+    remote.send(data.hexToByteArray())
+    remote.send("020000006300".hexToByteArray())
+    assertTrue(stopped.isCompleted)
+  }
+
+  @Test
+  fun `close cancels a handler still reading a streamed body`() = runTest {
+    val remote = Remote(this)
+    val stopped = CompletableDeferred<Unit>()
     var taken = 0
     val rpc =
       Rpc(
-        remote.data,
-        write = {},
+        TestTransport(remote.data),
         onRequest = {
           try {
             it.body!!.collect {
               taken++
-              release.await()
+              awaitCancellation()
             }
-          } catch (e: ConnectionClosedException) {}
+          } finally {
+            stopped.complete(Unit)
+          }
           Reply.Data(ByteArray(0))
         },
         scope = backgroundScope,
@@ -218,12 +238,10 @@ class IncomingRequestStreamTest {
     remote.send(open.hexToByteArray())
     yield()
     remote.send(data.hexToByteArray())
-    yield()
     remote.send(big.hexToByteArray())
     rpc.close()
-    release.complete(Unit)
-    yield()
-    assertEquals(2, taken)
+    assertTrue(stopped.isCompleted)
+    assertEquals(1, taken)
   }
 
   @Test
@@ -231,18 +249,17 @@ class IncomingRequestStreamTest {
     val remote = Remote(this)
     val rpc =
       Rpc(
-        remote.data,
-        write = {},
+        TestTransport(remote.data),
         onRequest = { awaitCancellation() },
-        maxBufferedBytes = 1u,
+        maxBufferedBytes = 1,
         scope = backgroundScope,
       )
     remote.send(open.hexToByteArray())
     yield()
     remote.send(data.hexToByteArray())
-    assertFailsWith<StreamOverflowException> { rpc.event(0u, ByteArray(0)) }
+    assertFailsWith<StreamOverflowException> { rpc.request(0u, ByteArray(0)) }
     remote.send(end.hexToByteArray())
-    assertFailsWith<StreamOverflowException> { rpc.event(0u, ByteArray(0)) }
+    assertFailsWith<StreamOverflowException> { rpc.request(0u, ByteArray(0)) }
     coroutineContext.cancelChildren()
   }
 
@@ -252,10 +269,9 @@ class IncomingRequestStreamTest {
     val sent = mutableListOf<String>()
     val rpc =
       Rpc(
-        remote.data,
-        write = { sent += it.toHexString() },
+        TestTransport(remote.data, { sent += it.toHexString() }),
         onRequest = { Reply.Data(it.body!!.fold(ByteArray(0)) { a, b -> a + b }) },
-        maxBufferedBytes = 2u,
+        maxBufferedBytes = 2,
         scope = backgroundScope,
       )
     remote.send(open.hexToByteArray())
@@ -272,8 +288,7 @@ class IncomingRequestStreamTest {
     val sent = mutableListOf<String>()
     val rpc =
       Rpc(
-        remote.data,
-        write = { sent += it.toHexString() },
+        TestTransport(remote.data, { sent += it.toHexString() }),
         onRequest = { Reply.Data(it.body!!.fold(ByteArray(0)) { a, b -> a + b }) },
         scope = backgroundScope,
       )
@@ -285,21 +300,20 @@ class IncomingRequestStreamTest {
   }
 
   @Test
-  fun `an end with an error ends the body`() = runTest {
+  fun `an end with an error fails the connection`() = runTest {
     val remote = Remote(this)
     val sent = mutableListOf<String>()
     val rpc =
       Rpc(
-        remote.data,
-        write = { sent += it.toHexString() },
+        TestTransport(remote.data, { sent += it.toHexString() }),
         onRequest = { Reply.Data(it.body!!.fold(ByteArray(0)) { a, b -> a + b }) },
         scope = backgroundScope,
       )
     remote.send(open.hexToByteArray())
     yield()
     remote.send(endError.hexToByteArray())
-    yield()
-    assertEquals(listOf(ack, empty), sent)
+    assertFailsWith<MalformedFrameException> { rpc.request(0u, ByteArray(0)) }
+    assertEquals(listOf(ack), sent)
   }
 
   @Test
@@ -308,8 +322,7 @@ class IncomingRequestStreamTest {
     val sent = mutableListOf<String>()
     val rpc =
       Rpc(
-        remote.data,
-        write = { sent += it.toHexString() },
+        TestTransport(remote.data, { sent += it.toHexString() }),
         onRequest = { Reply.Data(it.body!!.first()) },
         scope = backgroundScope,
       )
@@ -326,8 +339,7 @@ class IncomingRequestStreamTest {
     val sent = mutableListOf<String>()
     val rpc =
       Rpc(
-        remote.data,
-        write = { sent += it.toHexString() },
+        TestTransport(remote.data, { sent += it.toHexString() }),
         onRequest = { Reply.Data(ByteArray(0)) },
         scope = backgroundScope,
       )
@@ -342,8 +354,7 @@ class IncomingRequestStreamTest {
     val sent = mutableListOf<String>()
     val rpc =
       Rpc(
-        remote.data,
-        write = { sent += it.toHexString() },
+        TestTransport(remote.data, { sent += it.toHexString() }),
         onRequest = { Reply.Data(it.body!!.fold(ByteArray(0)) { a, b -> a + b }) },
         scope = backgroundScope,
       )
@@ -361,8 +372,7 @@ class IncomingRequestStreamTest {
     val remote = Remote(this)
     val rpc =
       Rpc(
-        remote.data,
-        write = {},
+        TestTransport(remote.data),
         scope = CoroutineScope(coroutineContext + Job().apply { cancel() }),
       )
     yield()
@@ -370,21 +380,20 @@ class IncomingRequestStreamTest {
   }
 
   @Test
-  fun `a data frame without data ends the body cleanly`() = runTest {
+  fun `a data frame with an error fails the connection`() = runTest {
     val remote = Remote(this)
     val sent = mutableListOf<String>()
     val rpc =
       Rpc(
-        remote.data,
-        write = { sent += it.toHexString() },
+        TestTransport(remote.data, { sent += it.toHexString() }),
         onRequest = { Reply.Data(it.body!!.fold(ByteArray(0)) { a, b -> a + b }) },
         scope = backgroundScope,
       )
     remote.send(open.hexToByteArray())
     yield()
     remote.send(dataError.hexToByteArray())
-    yield()
-    assertEquals(listOf(ack, empty), sent)
+    assertFailsWith<MalformedFrameException> { rpc.request(0u, ByteArray(0)) }
+    assertEquals(listOf(ack), sent)
   }
 
   @Test
@@ -393,8 +402,7 @@ class IncomingRequestStreamTest {
     val sent = mutableListOf<String>()
     val rpc =
       Rpc(
-        remote.data,
-        write = { sent += it.toHexString() },
+        TestTransport(remote.data, { sent += it.toHexString() }),
         onRequest = { Reply.Stream(it.body!!) },
         scope = backgroundScope,
       )
@@ -415,8 +423,7 @@ class IncomingRequestStreamTest {
     val late = CompletableDeferred<List<ByteArray>>()
     val rpc =
       Rpc(
-        remote.data,
-        write = { sent += it.toHexString() },
+        TestTransport(remote.data, { sent += it.toHexString() }),
         onRequest = { request ->
           launch { late.complete(request.body!!.toList()) }
           Reply.Data(ByteArray(0))
@@ -427,5 +434,66 @@ class IncomingRequestStreamTest {
     yield()
     assertEquals(emptyList(), late.await())
     assertEquals(listOf(empty, ack, destroy), sent)
+  }
+
+  @Test
+  fun `a failing body collector destroys the request stream with its error`() = runTest {
+    val remote = Remote(this)
+    val sent = mutableListOf<String>()
+    val rpc =
+      Rpc(
+        TestTransport(remote.data, { sent += it.toHexString() }),
+        onRequest = { request ->
+          request.body!!.collect { throw RemoteException("boom", "E_BOOM", 1) }
+          Reply.Data(ByteArray(0))
+        },
+        scope = backgroundScope,
+      )
+    remote.send(open.hexToByteArray())
+    yield()
+    remote.send(data.hexToByteArray())
+    val error = RemoteError("boom", "E_BOOM", 1)
+    val destroyed =
+      Message.Stream(1u, STREAM_REQUEST or STREAM_DESTROY or STREAM_ERROR, null, error)
+    assertEquals(listOf(ack, encode(frame, destroyed).toHexString(), boom), sent)
+  }
+
+  @Test
+  fun `collecting a body a second time throws and leaves the first collection be`() = runTest {
+    val remote = Remote(this)
+    val sent = mutableListOf<String>()
+    Rpc(
+      TestTransport(remote.data, { sent += it.toHexString() }),
+      onRequest = { request ->
+        val body = request.body!!
+        val first = async { body.fold(ByteArray(0)) { a, b -> a + b } }
+        yield()
+        assertFailsWith<AlreadyReceivedException> { body.toList() }
+        Reply.Data(first.await())
+      },
+      scope = backgroundScope,
+    )
+    remote.send(open.hexToByteArray())
+    remote.send(data.hexToByteArray())
+    remote.send(end.hexToByteArray())
+    assertEquals(listOf(ack, reply), sent)
+  }
+
+  @Test
+  fun `collecting a body again after its end throws`() = runTest {
+    val remote = Remote(this)
+    val second = CompletableDeferred<Throwable?>()
+    Rpc(
+      TestTransport(remote.data),
+      onRequest = { request ->
+        request.body!!.toList()
+        second.complete(runCatching { request.body.toList() }.exceptionOrNull())
+        Reply.Data(ByteArray(0))
+      },
+      scope = backgroundScope,
+    )
+    remote.send(open.hexToByteArray())
+    remote.send(end.hexToByteArray())
+    assertIs<AlreadyReceivedException>(second.await())
   }
 }

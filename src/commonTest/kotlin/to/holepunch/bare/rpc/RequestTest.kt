@@ -24,7 +24,7 @@ class RequestTest {
   fun `each request goes out as one frame with the next id`() = runTest {
     val remote = Remote(this)
     val sent = mutableListOf<String>()
-    val rpc = Rpc(remote.data, write = { sent += it.toHexString() }, scope = backgroundScope)
+    val rpc = Rpc(TestTransport(remote.data, { sent += it.toHexString() }), scope = backgroundScope)
     launch { rpc.request(7u, "hi".encodeToByteArray()) }
     launch { rpc.request(7u, "hi".encodeToByteArray()) }
     yield()
@@ -35,7 +35,7 @@ class RequestTest {
   @Test
   fun `a response resumes its request with the data`() = runTest {
     val remote = Remote(this)
-    val rpc = Rpc(remote.data, write = {}, scope = backgroundScope)
+    val rpc = Rpc(TestTransport(remote.data), scope = backgroundScope)
     val reply = async { rpc.request(7u, "hi".encodeToByteArray()) }
     yield()
     remote.send(ok.hexToByteArray())
@@ -46,7 +46,7 @@ class RequestTest {
   fun `an error response throws a remote exception`() = runTest {
     val remote = Remote(this)
     supervisorScope {
-      val rpc = Rpc(remote.data, write = {}, scope = backgroundScope)
+      val rpc = Rpc(TestTransport(remote.data), scope = backgroundScope)
       val reply = async { rpc.request(7u, "hi".encodeToByteArray()) }
       yield()
       remote.send(boom.hexToByteArray())
@@ -59,11 +59,11 @@ class RequestTest {
   fun `a failure resumes pending requests with it`() = runTest {
     val remote = Remote(this)
     supervisorScope {
-      val rpc = Rpc(remote.data, write = {}, scope = backgroundScope)
+      val rpc = Rpc(TestTransport(remote.data), scope = backgroundScope)
       val reply = async { rpc.request(7u, "hi".encodeToByteArray()) }
       yield()
       remote.send("020000000100".hexToByteArray())
-      val failure = assertFailsWith<MalformedFrameException> { rpc.event(0u, ByteArray(0)) }
+      val failure = assertFailsWith<MalformedFrameException> { rpc.request(0u, ByteArray(0)) }
       val error = assertFailsWith<MalformedFrameException> { reply.await() }
       assertTrue(error === failure || error.cause === failure)
     }
@@ -73,9 +73,9 @@ class RequestTest {
   fun `a request after a failure throws it and sends nothing`() = runTest {
     val remote = Remote(this)
     val sent = mutableListOf<ByteArray>()
-    val rpc = Rpc(remote.data, write = { sent += it }, scope = backgroundScope)
+    val rpc = Rpc(TestTransport(remote.data, { sent += it }), scope = backgroundScope)
     remote.send("020000000100".hexToByteArray())
-    val failure = assertFailsWith<MalformedFrameException> { rpc.event(0u, ByteArray(0)) }
+    val failure = assertFailsWith<MalformedFrameException> { rpc.request(0u, ByteArray(0)) }
     assertSame(failure, assertFailsWith<MalformedFrameException> { rpc.request(7u, ByteArray(0)) })
     assertEquals(emptyList(), sent)
   }
@@ -83,7 +83,7 @@ class RequestTest {
   @Test
   fun `a response with nothing pending is ignored`() = runTest {
     val remote = Remote(this)
-    Rpc(remote.data, write = {}, scope = backgroundScope)
+    Rpc(TestTransport(remote.data), scope = backgroundScope)
     remote.send(ok.hexToByteArray())
   }
 
@@ -93,12 +93,14 @@ class RequestTest {
     val log = mutableListOf<String>()
     val rpc =
       Rpc(
-        remote.data,
-        write = {
-          log += "start"
-          yield()
-          log += "end"
-        },
+        TestTransport(
+          remote.data,
+          {
+            log += "start"
+            yield()
+            log += "end"
+          },
+        ),
         scope = backgroundScope,
       )
     launch { rpc.request(7u, ByteArray(0)) }

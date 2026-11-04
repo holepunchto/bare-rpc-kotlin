@@ -6,6 +6,19 @@
 // - Show declarations: true
 
 // Library unique name: <com.github.holepunchto:bare-rpc-kotlin>
+abstract interface to.holepunch.bare.rpc/Handler { // to.holepunch.bare.rpc/Handler|null[0]
+    open suspend fun handle(to.holepunch.bare.rpc/IncomingEvent) // to.holepunch.bare.rpc/Handler.handle|handle(to.holepunch.bare.rpc.IncomingEvent){}[0]
+    open suspend fun handle(to.holepunch.bare.rpc/IncomingRequest): to.holepunch.bare.rpc/Reply // to.holepunch.bare.rpc/Handler.handle|handle(to.holepunch.bare.rpc.IncomingRequest){}[0]
+}
+
+abstract interface to.holepunch.bare.rpc/Transport { // to.holepunch.bare.rpc/Transport|null[0]
+    abstract val data // to.holepunch.bare.rpc/Transport.data|{}data[0]
+        abstract fun <get-data>(): kotlinx.coroutines.flow/Flow<kotlin/ByteArray> // to.holepunch.bare.rpc/Transport.data.<get-data>|<get-data>(){}[0]
+
+    abstract suspend fun close() // to.holepunch.bare.rpc/Transport.close|close(){}[0]
+    abstract suspend fun write(kotlin/ByteArray) // to.holepunch.bare.rpc/Transport.write|write(kotlin.ByteArray){}[0]
+}
+
 sealed interface to.holepunch.bare.rpc/Message { // to.holepunch.bare.rpc/Message|null[0]
     abstract val id // to.holepunch.bare.rpc/Message.id|{}id[0]
         abstract fun <get-id>(): kotlin/ULong // to.holepunch.bare.rpc/Message.id.<get-id>|<get-id>(){}[0]
@@ -24,6 +37,7 @@ sealed interface to.holepunch.bare.rpc/Message { // to.holepunch.bare.rpc/Messag
 
         final fun equals(kotlin/Any?): kotlin/Boolean // to.holepunch.bare.rpc/Message.Request.equals|equals(kotlin.Any?){}[0]
         final fun hashCode(): kotlin/Int // to.holepunch.bare.rpc/Message.Request.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // to.holepunch.bare.rpc/Message.Request.toString|toString(){}[0]
     }
 
     final class Response : to.holepunch.bare.rpc/Message { // to.holepunch.bare.rpc/Message.Response|null[0]
@@ -40,6 +54,7 @@ sealed interface to.holepunch.bare.rpc/Message { // to.holepunch.bare.rpc/Messag
 
         final fun equals(kotlin/Any?): kotlin/Boolean // to.holepunch.bare.rpc/Message.Response.equals|equals(kotlin.Any?){}[0]
         final fun hashCode(): kotlin/Int // to.holepunch.bare.rpc/Message.Response.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // to.holepunch.bare.rpc/Message.Response.toString|toString(){}[0]
     }
 
     final class Stream : to.holepunch.bare.rpc/Message { // to.holepunch.bare.rpc/Message.Stream|null[0]
@@ -56,6 +71,7 @@ sealed interface to.holepunch.bare.rpc/Message { // to.holepunch.bare.rpc/Messag
 
         final fun equals(kotlin/Any?): kotlin/Boolean // to.holepunch.bare.rpc/Message.Stream.equals|equals(kotlin.Any?){}[0]
         final fun hashCode(): kotlin/Int // to.holepunch.bare.rpc/Message.Stream.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // to.holepunch.bare.rpc/Message.Stream.toString|toString(){}[0]
     }
 }
 
@@ -75,13 +91,15 @@ sealed interface to.holepunch.bare.rpc/Reply { // to.holepunch.bare.rpc/Reply|nu
     }
 }
 
-final class to.holepunch.bare.rpc/CommandRouter { // to.holepunch.bare.rpc/CommandRouter|null[0]
+final class to.holepunch.bare.rpc/AlreadyReceivedException : to.holepunch.bare.rpc/RpcException // to.holepunch.bare.rpc/AlreadyReceivedException|null[0]
+
+final class to.holepunch.bare.rpc/CommandRouter : to.holepunch.bare.rpc/Handler { // to.holepunch.bare.rpc/CommandRouter|null[0]
     constructor <init>() // to.holepunch.bare.rpc/CommandRouter.<init>|<init>(){}[0]
 
     final fun onEvent(kotlin/ULong, kotlin.coroutines/SuspendFunction1<to.holepunch.bare.rpc/IncomingEvent, kotlin/Unit>) // to.holepunch.bare.rpc/CommandRouter.onEvent|onEvent(kotlin.ULong;kotlin.coroutines.SuspendFunction1<to.holepunch.bare.rpc.IncomingEvent,kotlin.Unit>){}[0]
     final fun onRequest(kotlin/ULong, kotlin.coroutines/SuspendFunction1<to.holepunch.bare.rpc/IncomingRequest, to.holepunch.bare.rpc/Reply>) // to.holepunch.bare.rpc/CommandRouter.onRequest|onRequest(kotlin.ULong;kotlin.coroutines.SuspendFunction1<to.holepunch.bare.rpc.IncomingRequest,to.holepunch.bare.rpc.Reply>){}[0]
-    final suspend fun dispatch(to.holepunch.bare.rpc/IncomingEvent) // to.holepunch.bare.rpc/CommandRouter.dispatch|dispatch(to.holepunch.bare.rpc.IncomingEvent){}[0]
-    final suspend fun dispatch(to.holepunch.bare.rpc/IncomingRequest): to.holepunch.bare.rpc/Reply // to.holepunch.bare.rpc/CommandRouter.dispatch|dispatch(to.holepunch.bare.rpc.IncomingRequest){}[0]
+    final suspend fun handle(to.holepunch.bare.rpc/IncomingEvent) // to.holepunch.bare.rpc/CommandRouter.handle|handle(to.holepunch.bare.rpc.IncomingEvent){}[0]
+    final suspend fun handle(to.holepunch.bare.rpc/IncomingRequest): to.holepunch.bare.rpc/Reply // to.holepunch.bare.rpc/CommandRouter.handle|handle(to.holepunch.bare.rpc.IncomingRequest){}[0]
 }
 
 final class to.holepunch.bare.rpc/ConnectionClosedException : to.holepunch.bare.rpc/RpcException // to.holepunch.bare.rpc/ConnectionClosedException|null[0]
@@ -89,10 +107,17 @@ final class to.holepunch.bare.rpc/ConnectionClosedException : to.holepunch.bare.
 final class to.holepunch.bare.rpc/Decoded { // to.holepunch.bare.rpc/Decoded|null[0]
     constructor <init>(to.holepunch.bare.rpc/Message, kotlin/Int) // to.holepunch.bare.rpc/Decoded.<init>|<init>(to.holepunch.bare.rpc.Message;kotlin.Int){}[0]
 
+    final val bytesRead // to.holepunch.bare.rpc/Decoded.bytesRead|{}bytesRead[0]
+        final fun <get-bytesRead>(): kotlin/Int // to.holepunch.bare.rpc/Decoded.bytesRead.<get-bytesRead>|<get-bytesRead>(){}[0]
     final val message // to.holepunch.bare.rpc/Decoded.message|{}message[0]
         final fun <get-message>(): to.holepunch.bare.rpc/Message // to.holepunch.bare.rpc/Decoded.message.<get-message>|<get-message>(){}[0]
-    final val read // to.holepunch.bare.rpc/Decoded.read|{}read[0]
-        final fun <get-read>(): kotlin/Int // to.holepunch.bare.rpc/Decoded.read.<get-read>|<get-read>(){}[0]
+}
+
+final class to.holepunch.bare.rpc/FrameTooLargeException : to.holepunch.bare.rpc/RpcException { // to.holepunch.bare.rpc/FrameTooLargeException|null[0]
+    final val limit // to.holepunch.bare.rpc/FrameTooLargeException.limit|{}limit[0]
+        final fun <get-limit>(): kotlin/Int // to.holepunch.bare.rpc/FrameTooLargeException.limit.<get-limit>|<get-limit>(){}[0]
+    final val size // to.holepunch.bare.rpc/FrameTooLargeException.size|{}size[0]
+        final fun <get-size>(): kotlin/Long // to.holepunch.bare.rpc/FrameTooLargeException.size.<get-size>|<get-size>(){}[0]
 }
 
 final class to.holepunch.bare.rpc/IncomingEvent { // to.holepunch.bare.rpc/IncomingEvent|null[0]
@@ -142,7 +167,8 @@ final class to.holepunch.bare.rpc/RemoteException : to.holepunch.bare.rpc/RpcExc
 }
 
 final class to.holepunch.bare.rpc/Rpc { // to.holepunch.bare.rpc/Rpc|null[0]
-    constructor <init>(kotlinx.coroutines.flow/Flow<kotlin/ByteArray>, kotlin.coroutines/SuspendFunction1<kotlin/ByteArray, kotlin/Unit>, kotlinx.coroutines/CoroutineScope, kotlin.coroutines/SuspendFunction1<to.holepunch.bare.rpc/IncomingEvent, kotlin/Unit> = ..., kotlin.coroutines/SuspendFunction1<to.holepunch.bare.rpc/IncomingRequest, to.holepunch.bare.rpc/Reply> = ..., kotlin/UInt = ..., kotlin/UInt = ...) // to.holepunch.bare.rpc/Rpc.<init>|<init>(kotlinx.coroutines.flow.Flow<kotlin.ByteArray>;kotlin.coroutines.SuspendFunction1<kotlin.ByteArray,kotlin.Unit>;kotlinx.coroutines.CoroutineScope;kotlin.coroutines.SuspendFunction1<to.holepunch.bare.rpc.IncomingEvent,kotlin.Unit>;kotlin.coroutines.SuspendFunction1<to.holepunch.bare.rpc.IncomingRequest,to.holepunch.bare.rpc.Reply>;kotlin.UInt;kotlin.UInt){}[0]
+    constructor <init>(to.holepunch.bare.rpc/Transport, kotlinx.coroutines/CoroutineScope, kotlin.coroutines/SuspendFunction1<to.holepunch.bare.rpc/IncomingRequest, to.holepunch.bare.rpc/Reply> = ..., kotlin.coroutines/SuspendFunction1<to.holepunch.bare.rpc/IncomingEvent, kotlin/Unit> = ..., kotlin/Int = ..., kotlin/Int = ...) // to.holepunch.bare.rpc/Rpc.<init>|<init>(to.holepunch.bare.rpc.Transport;kotlinx.coroutines.CoroutineScope;kotlin.coroutines.SuspendFunction1<to.holepunch.bare.rpc.IncomingRequest,to.holepunch.bare.rpc.Reply>;kotlin.coroutines.SuspendFunction1<to.holepunch.bare.rpc.IncomingEvent,kotlin.Unit>;kotlin.Int;kotlin.Int){}[0]
+    constructor <init>(to.holepunch.bare.rpc/Transport, kotlinx.coroutines/CoroutineScope, to.holepunch.bare.rpc/Handler, kotlin/Int = ..., kotlin/Int = ...) // to.holepunch.bare.rpc/Rpc.<init>|<init>(to.holepunch.bare.rpc.Transport;kotlinx.coroutines.CoroutineScope;to.holepunch.bare.rpc.Handler;kotlin.Int;kotlin.Int){}[0]
 
     final fun requestFlow(kotlin/ULong, kotlin/ByteArray): kotlinx.coroutines.flow/Flow<kotlin/ByteArray> // to.holepunch.bare.rpc/Rpc.requestFlow|requestFlow(kotlin.ULong;kotlin.ByteArray){}[0]
     final fun requestFlow(kotlin/ULong, kotlinx.coroutines.flow/Flow<kotlin/ByteArray>): kotlinx.coroutines.flow/Flow<kotlin/ByteArray> // to.holepunch.bare.rpc/Rpc.requestFlow|requestFlow(kotlin.ULong;kotlinx.coroutines.flow.Flow<kotlin.ByteArray>){}[0]
@@ -150,6 +176,7 @@ final class to.holepunch.bare.rpc/Rpc { // to.holepunch.bare.rpc/Rpc|null[0]
     final suspend fun event(kotlin/ULong, kotlin/ByteArray) // to.holepunch.bare.rpc/Rpc.event|event(kotlin.ULong;kotlin.ByteArray){}[0]
     final suspend fun request(kotlin/ULong, kotlin/ByteArray): kotlin/ByteArray // to.holepunch.bare.rpc/Rpc.request|request(kotlin.ULong;kotlin.ByteArray){}[0]
     final suspend fun request(kotlin/ULong, kotlinx.coroutines.flow/Flow<kotlin/ByteArray>): kotlin/ByteArray // to.holepunch.bare.rpc/Rpc.request|request(kotlin.ULong;kotlinx.coroutines.flow.Flow<kotlin.ByteArray>){}[0]
+    final suspend fun wait() // to.holepunch.bare.rpc/Rpc.wait|wait(){}[0]
 }
 
 final class to.holepunch.bare.rpc/StreamOverflowException : to.holepunch.bare.rpc/RpcException // to.holepunch.bare.rpc/StreamOverflowException|null[0]
@@ -167,3 +194,5 @@ final object to.holepunch.bare.rpc/Messages { // to.holepunch.bare.rpc/Messages|
     final fun decode(kotlin/ByteArray): to.holepunch.bare.rpc/Decoded // to.holepunch.bare.rpc/Messages.decode|decode(kotlin.ByteArray){}[0]
     final fun encode(to.holepunch.bare.rpc/Message): kotlin/ByteArray // to.holepunch.bare.rpc/Messages.encode|encode(to.holepunch.bare.rpc.Message){}[0]
 }
+
+final fun to.holepunch.bare.rpc/Transport(kotlinx.coroutines.flow/Flow<kotlin/ByteArray>, kotlin.coroutines/SuspendFunction1<kotlin/ByteArray, kotlin/Unit>, kotlin.coroutines/SuspendFunction0<kotlin/Unit>): to.holepunch.bare.rpc/Transport // to.holepunch.bare.rpc/Transport|Transport(kotlinx.coroutines.flow.Flow<kotlin.ByteArray>;kotlin.coroutines.SuspendFunction1<kotlin.ByteArray,kotlin.Unit>;kotlin.coroutines.SuspendFunction0<kotlin.Unit>){}[0]

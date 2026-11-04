@@ -11,6 +11,10 @@ import kotlinx.coroutines.test.runTest
 import to.holepunch.bare.rpc.CommandRouter
 import to.holepunch.bare.rpc.Reply
 import to.holepunch.bare.rpc.Rpc
+import to.holepunch.bare.rpc.Transport
+
+private fun ChannelTransport(incoming: Channel<ByteArray>, outgoing: Channel<ByteArray>) =
+  Transport(incoming.consumeAsFlow(), outgoing::send) { outgoing.close() }
 
 class UsageTest {
   @Test
@@ -23,14 +27,8 @@ class UsageTest {
       Reply.Data("hello ${request.data.decodeToString()}".encodeToByteArray())
     }
 
-    Rpc(
-      toServer.consumeAsFlow(),
-      toClient::send,
-      backgroundScope,
-      onRequest = router::dispatch,
-      onEvent = router::dispatch,
-    )
-    val client = Rpc(toClient.consumeAsFlow(), toServer::send, backgroundScope)
+    Rpc(ChannelTransport(toServer, toClient), backgroundScope, handler = router)
+    val client = Rpc(ChannelTransport(toClient, toServer), backgroundScope)
 
     assertEquals("hello ada", client.request(1u, "ada".encodeToByteArray()).decodeToString())
   }
@@ -45,8 +43,8 @@ class UsageTest {
       Reply.Stream(request.body!!.map { it.decodeToString().uppercase().encodeToByteArray() })
     }
 
-    Rpc(toServer.consumeAsFlow(), toClient::send, backgroundScope, onRequest = router::dispatch)
-    val client = Rpc(toClient.consumeAsFlow(), toServer::send, backgroundScope)
+    Rpc(ChannelTransport(toServer, toClient), backgroundScope, handler = router)
+    val client = Rpc(ChannelTransport(toClient, toServer), backgroundScope)
 
     val body = flowOf("ada", "grace").map { it.encodeToByteArray() }
     assertEquals(

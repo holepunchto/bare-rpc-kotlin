@@ -1,20 +1,21 @@
 package to.holepunch.bare.rpc
 
-import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.consumeAsFlow
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.onCompletion
@@ -29,65 +30,105 @@ import to.holepunch.compactEncoding.decode
 import to.holepunch.compactEncoding.encode
 
 /**
- * One end of a bare-rpc connection over a byte transport.
+ * One end of a bare-rpc connection over a [Transport].
  *
- * @param data the bytes received from the peer, collected in [scope] from the start. Their end
- *   closes the connection, and a failure to collect them closes it with that failure. Any failure
- *   to read a frame closes it too: one thrown by [onEvent], and one from [write]. An exception from
- *   [onRequest] goes back to the peer instead.
- * @param write writes one encoded frame to the peer, whole or not at all. A failure closes the
- *   connection. It is not cancelled once called, even when the caller that queued the frame is,
- *   since frames queued by other callers wait behind it. It must not wait on [data] being
- *   collected.
- * @param scope collects [data], runs the handlers of requests that stream a body, and streams each
- *   [Reply.Stream]. Cancelling it closes the connection.
- * @param onEvent receives each event the peer sends.
- * @param onRequest answers each request the peer sends: its return value is the reply, and an
- *   exception it throws goes back as an error, a [RemoteException] as itself. By default every
- *   request is rejected as an unknown command.
- * @param maxFrameSize the longest frame accepted from the peer, length prefix included.
+ * The connection collects the data of [transport] in [scope] from the start. Their end closes it
+ * with a [ConnectionClosedException], and a failure to collect them closes it with that failure. A
+ * failure of [Transport.write] or of an event handler closes it too, while an exception from a
+ * request handler goes back to the peer instead. A frame longer than [maxFrameSize] closes it with
+ * a [FrameTooLargeException]. A frame that cannot be decoded closes it with a
+ * [MalformedFrameException] or [UnknownMessageException], as does one that a valid peer never
+ * sends. A frame for a request or stream that has finished, or that was never known, is ignored.
+ * However the connection ends, it then closes [transport]: after writing the frames already queued
+ * if it ended with a [ConnectionClosedException], and dropping them otherwise. Bodies still being
+ * sent, of requests and of each [Reply.Stream], are cancelled with a [CancellationException] whose
+ * cause is the exception the connection ended with.
+ *
+ * Each handler runs in a child of the connection's job, so a slow handler holds back no other
+ * frame, and a handler may itself make requests to the peer.
+ *
+ * @param transport the transport to the peer. A write is not cancelled once called, even when the
+ *   caller that queued the frame is, since frames queued by other callers wait behind it.
+ * @param scope the parent of the connection's work: collecting the data, running the handlers, and
+ *   streaming the body of each request and each [Reply.Stream] all run in a child of its job, which
+ *   [close] and any failure cancel. Cancelling it closes the connection, and a [Reply.Stream] that
+ *   can no longer be streamed is answered with a [ConnectionClosedException] error instead.
+ * @param handler answers the requests and receives the events of the peer.
+ * @param maxFrameSize the longest frame accepted from the peer, length prefix included. A longer
+ *   one fails the connection with a [FrameTooLargeException]. It must be positive.
  * @param maxBufferedBytes the most of one stream's data held for its collector. A peer that sends
  *   past it fails the connection with a [StreamOverflowException]. Below the 16 KiB pause mark, the
- *   peer is never paused first.
+ *   peer is never paused first. It must be positive.
+ * @throws IllegalArgumentException if [maxFrameSize] or [maxBufferedBytes] is not positive.
  */
 public class Rpc(
-  data: Flow<ByteArray>,
-  private val write: suspend (ByteArray) -> Unit,
-  private val scope: CoroutineScope,
-  private val onEvent: suspend (IncomingEvent) -> Unit = {},
-  private val onRequest: suspend (IncomingRequest) -> Reply = { throw unknownCommand(it.command) },
-  maxFrameSize: UInt = DEFAULT_MAX_FRAME_SIZE,
-  private val maxBufferedBytes: UInt = DEFAULT_MAX_BUFFERED_BYTES,
+  private val transport: Transport,
+  scope: CoroutineScope,
+  private val handler: Handler,
+  maxFrameSize: Int = DEFAULT_MAX_FRAME_SIZE,
+  private val maxBufferedBytes: Int = DEFAULT_MAX_BUFFERED_BYTES,
 ) {
+  /**
+   * Creates a connection that passes the requests and events of the peer to functions, as a
+   * [Handler] would.
+   *
+   * @param transport the transport to the peer, as for the primary constructor.
+   * @param scope the parent of the connection's work, as for the primary constructor.
+   * @param onRequest answers each request the peer sends, as [Handler.handle] does. By default
+   *   every request is rejected as an unknown command.
+   * @param onEvent receives each event the peer sends. By default, events are dropped.
+   * @param maxFrameSize the longest frame accepted from the peer, as for the primary constructor.
+   * @param maxBufferedBytes the most of one stream's data held for its collector, as for the
+   *   primary constructor.
+   * @throws IllegalArgumentException if [maxFrameSize] or [maxBufferedBytes] is not positive.
+   */
+  public constructor(
+    transport: Transport,
+    scope: CoroutineScope,
+    onRequest: suspend (IncomingRequest) -> Reply = { throw unknownCommand(it.command) },
+    onEvent: suspend (IncomingEvent) -> Unit = {},
+    maxFrameSize: Int = DEFAULT_MAX_FRAME_SIZE,
+    maxBufferedBytes: Int = DEFAULT_MAX_BUFFERED_BYTES,
+  ) : this(transport, scope, FunctionHandler(onRequest, onEvent), maxFrameSize, maxBufferedBytes)
+
+  init {
+    require(maxFrameSize > 0) { "maxFrameSize must be positive" }
+    require(maxBufferedBytes > 0) { "maxBufferedBytes must be positive" }
+  }
+
+  private val job = SupervisorJob(scope.coroutineContext[Job])
+  private val tasks = CoroutineScope(scope.coroutineContext + job)
   private val splitter = FrameSplitter(maxFrameSize)
   private val sending = Mutex()
   private val state = Mutex()
   private var lastId = 0uL
   private val pending = mutableMapOf<ULong, CompletableDeferred<ByteArray>>()
-  private val requestAcks = mutableMapOf<ULong, CompletableDeferred<Boolean>>()
-  private val requestBodies = mutableMapOf<ULong, Inbox>()
-  private val replyBodies = mutableMapOf<ULong, Inbox>()
-  private val replyAcks = mutableMapOf<ULong, CompletableDeferred<Unit>>()
-  private val requestPauses = mutableMapOf<ULong, MutableStateFlow<Boolean>>()
-  private val replyPauses = mutableMapOf<ULong, MutableStateFlow<Boolean>>()
-  private val requestSenders = mutableMapOf<ULong, Job>()
-  private val replySenders = mutableMapOf<ULong, Job>()
+  private val requestIn = mutableMapOf<ULong, Inbox>()
+  private val replyIn = mutableMapOf<ULong, Inbox>()
+  private val requestOut = mutableMapOf<ULong, OutgoingBody>()
+  private val replyOut = mutableMapOf<ULong, OutgoingBody>()
   private val earlyReplyAcks = mutableSetOf<ULong>()
+  private val earlyReplyDestroys = mutableSetOf<ULong>()
+  private val liveRequests = mutableSetOf<ULong>()
+  private var lastRequestId = 0uL
   private val outgoing = ArrayDeque<ByteArray>()
   private var failure: Throwable? = null
+  private val transportClosed = CompletableDeferred<Unit>()
 
   init {
-    launchWithCleanup(scope, { fail(ConnectionClosedException()) }) { read(data) }
+    launchWithCleanup({ fail(ConnectionClosedException()) }) { read(transport.data) }
   }
 
   /**
-   * Sends [data] to the peer as an event for [command], which gets no reply.
-   *
-   * @throws Throwable the failure that closed the connection, a [ConnectionClosedException] after
-   *   [close].
+   * Sends [data] to the peer as an event for [command], which gets no reply, and waits for it to be
+   * written. Once the connection has closed, the event is dropped.
    */
   public suspend fun event(command: ULong, data: ByteArray) {
-    sendMessage { Message.Request(0u, command, 0u, data) }
+    try {
+      sendMessage { Message.Request(0u, command, 0u, data) }
+    } catch (e: Throwable) {
+      if (e !== state.withLock { failure }) throw e
+    }
   }
 
   /**
@@ -103,9 +144,12 @@ public class Rpc(
 
   /**
    * Sends a request for [command] whose payload is [body], streamed to the peer once it accepts the
-   * stream, and returns the reply. Sending [body] stops once the reply comes or the peer stops
-   * reading it, and a reply before the peer accepts the stream skips [body]. If [body] throws, the
-   * stream is closed with the error and this call throws it.
+   * stream, and returns the reply as soon as it comes. Once accepted, [body] is streamed to its end
+   * in [scope] even after the reply, unless the peer stops reading it or the connection closes. A
+   * reply before the peer accepts the stream skips [body] and closes the stream, with the reply's
+   * error if it is one. If [body] throws, the stream is closed with the error, and this call throws
+   * it if the reply has yet to come. Cancelling this call before the reply stops [body] and closes
+   * the stream.
    *
    * @throws RemoteException if the peer replies with an error.
    * @throws UnexpectedStreamException if the peer replies with a stream.
@@ -117,8 +161,9 @@ public class Rpc(
 
   /**
    * Sends [data] to the peer as a request for [command], and emits the reply: each chunk of a
-   * streamed reply, or a single reply as one chunk. Each collection sends a new request. Stopping a
-   * collection before a streamed reply ends tells a peer that has started streaming to stop.
+   * streamed reply, or a single reply as one chunk unless it is empty. Each collection sends a new
+   * request. Stopping a collection before a streamed reply ends tells a peer that has started
+   * streaming to stop, with the error the collector failed with, if any.
    *
    * @throws RemoteException if the peer replies or closes the stream with an error.
    * @throws Throwable the failure that closed the connection, a [ConnectionClosedException] after
@@ -130,10 +175,13 @@ public class Rpc(
   /**
    * Sends a request for [command] whose payload is [body], streamed to the peer once it accepts the
    * stream, and emits the reply while [body] is sent: each chunk of a streamed reply, or a single
-   * reply as one chunk. Sending [body] stops once a single reply comes, a streamed reply ends, or
-   * the peer stops reading it. If [body] throws, the stream is closed with the error and the flow
-   * throws it. Each collection sends a new request. Stopping a collection before a streamed reply
-   * ends tells a peer that has started streaming to stop.
+   * reply as one chunk unless it is empty. Once accepted, [body] is streamed to its end in [scope]
+   * even after the reply ends, unless the peer stops reading it, the connection closes, or the
+   * collection is cancelled or fails, which closes the stream. A single reply before the peer
+   * accepts the stream closes it, with the reply's error if it is one. If [body] throws, the stream
+   * is closed with the error, and the flow throws it if the reply has yet to end. Each collection
+   * sends a new request. Stopping a collection before a streamed reply ends tells a peer that has
+   * started streaming to stop, with the error the collector failed with, if any.
    *
    * @throws RemoteException if the peer replies or closes the stream with an error.
    * @throws Throwable the failure that closed the connection, a [ConnectionClosedException] after
@@ -145,15 +193,43 @@ public class Rpc(
   /**
    * Closes the connection: pending requests and every later call throw a
    * [ConnectionClosedException], and the rest of the data received from the peer goes undelivered.
-   * Closing after a failure keeps that failure. The transport stays open; the caller closes it.
+   * Closing after a failure keeps that failure. It stops collecting the data, cancels running
+   * handlers and the bodies being streamed, writes the frames already queued, and closes the
+   * transport. It waits for all of that to finish, unless it is called from a handler or a body.
+   * Calling it again does nothing more.
    */
   public suspend fun close() {
     fail(ConnectionClosedException())
+    // A caller inside the connection's own work would wait on itself.
+    val caller = currentCoroutineContext()[Job]
+    if (caller == null || !job.runs(caller)) job.join()
+  }
+
+  /**
+   * Waits for the connection to close and its transport with it. It returns if the connection
+   * closed cleanly, by the end of the data or by [close], and throws the failure otherwise.
+   *
+   * @throws Throwable the failure that closed the connection, if it was not a
+   *   [ConnectionClosedException].
+   */
+  public suspend fun wait() {
+    transportClosed.await()
+    val cause = state.withLock { failure }
+    if (cause !is ConnectionClosedException) throw checkNotNull(cause)
+  }
+
+  private fun Job.runs(other: Job): Boolean = this == other || children.any { it.runs(other) }
+
+  // The number of entries kept per request or stream, so tests can see that none are left behind.
+  internal suspend fun tracked(): Int = state.withLock {
+    listOf(pending, requestIn, replyIn, requestOut, replyOut).sumOf { it.size } +
+      listOf(earlyReplyAcks, earlyReplyDestroys, liveRequests).sumOf { it.size }
   }
 
   private suspend fun read(data: Flow<ByteArray>) {
     try {
       data.collect { receive(it) }
+      if (splitter.hasPartialFrame) fail(MalformedFrameException("Truncated frame"))
     } catch (e: Throwable) {
       if (e is CancellationException) throw e
       fail(e)
@@ -185,27 +261,26 @@ public class Rpc(
     val accepted = CompletableDeferred<Boolean>()
     val paused = MutableStateFlow(false)
     var id = 0uL
+    var sender: Job? = null
     try {
       sendMessage {
         id = ++lastId
         pending[id] = reply
-        if (body != null) {
-          requestAcks[id] = accepted
-          requestPauses[id] = paused
-        }
+        if (body != null) requestOut[id] = OutgoingBody(accepted, paused)
         Message.Request(id, command, if (body != null) STREAM_OPEN else 0u, data)
       }
-      return coroutineScope {
-        val sender = body?.let { launch { sendRequestBody(id, it, accepted, paused) } }
-        reply.await().also { sender?.cancel() }
+      if (body != null) {
+        sender = launchRequestBody(id, body, accepted, paused) { reply.completeExceptionally(it) }
       }
+      return reply.await()
+    } catch (e: CancellationException) {
+      sender?.cancel()
+      throw e
     } finally {
       withContext(NonCancellable) {
         state.withLock {
           pending.remove(id)
-          requestAcks.remove(id)
-          requestPauses.remove(id)
-          requestSenders.remove(id)
+          if (sender == null) requestOut.remove(id)
         }
       }
     }
@@ -220,56 +295,68 @@ public class Rpc(
     val accepted = CompletableDeferred<Boolean>()
     val paused = MutableStateFlow(false)
     var id = 0uL
+    var failed: Throwable? = null
+    var sender: Job? = null
     try {
       sendMessage {
         id = ++lastId
-        replyBodies[id] = inbox
-        if (body != null) {
-          requestAcks[id] = accepted
-          requestPauses[id] = paused
-        }
+        replyIn[id] = inbox
+        if (body != null) requestOut[id] = OutgoingBody(accepted, paused)
         Message.Request(id, command, if (body != null) STREAM_OPEN else 0u, data)
       }
       sendMessage {
-        inbox.opened = true
+        inbox.isOpened = true
         Message.Stream(id, STREAM_RESPONSE or STREAM_OPEN, null, null)
       }
-      coroutineScope {
-        val sender = body?.let { launch { sendRequestBody(id, it, accepted, paused) } }
-        for (chunk in inbox.chunks) {
-          take(id, inbox, chunk)
+      if (body != null) {
+        sender = launchRequestBody(id, body, accepted, paused) { inbox.chunks.close(it) }
+      }
+      for (chunk in inbox.chunks) {
+        take(id, inbox, chunk)
+        try {
           emit(chunk)
+        } catch (e: Throwable) {
+          failed = e
+          throw e
         }
-        sender?.cancel()
       }
+    } catch (e: Throwable) {
+      if (e is CancellationException || e === failed) sender?.cancel()
+      throw e
     } finally {
-      stopReading(id, replyBodies)
-      withContext(NonCancellable) {
-        state.withLock {
-          requestAcks.remove(id)
-          requestPauses.remove(id)
-          requestSenders.remove(id)
-        }
-      }
+      stopReading(id, replyIn, failed)
+      if (sender == null) withContext(NonCancellable) { state.withLock { requestOut.remove(id) } }
     }
   }
 
-  private suspend fun sendRequestBody(
+  // Runs in the connection's scope, as the body streams on to its end after the reply comes.
+  private fun launchRequestBody(
     id: ULong,
     body: Flow<ByteArray>,
     accepted: CompletableDeferred<Boolean>,
     paused: MutableStateFlow<Boolean>,
-  ) {
-    state.withLock { requestSenders[id] = currentCoroutineContext().job }
-    if (!accepted.await()) return
-    sendBody(id, STREAM_REQUEST, body, paused)?.let { throw it }
-  }
+    onFailure: (Throwable) -> Unit,
+  ): Job =
+    launchWithCleanup({
+      // A body stopped before its end leaves the peer's stream open.
+      val open = state.withLock { requestOut.remove(id)?.isDone == false }
+      if (open) queueSignals(id) { listOf(STREAM_REQUEST or STREAM_CLOSE) }
+    }) {
+      val started = state.withLock {
+        val out = requestOut[id]?.takeUnless { it.isDone }
+        out?.sender = currentCoroutineContext().job
+        out != null
+      }
+      if (!started || !accepted.await()) return@launchWithCleanup
+      sendBody(id, STREAM_REQUEST, body, paused) { requestOut[id]?.isDone = true }?.let(onFailure)
+    }
 
   private suspend fun sendBody(
     id: ULong,
     mask: ULong,
     body: Flow<ByteArray>,
     paused: MutableStateFlow<Boolean>,
+    onEnd: () -> Unit = {},
   ): Throwable? {
     var error: Throwable? = null
     body
@@ -281,6 +368,7 @@ public class Rpc(
     val failed = error
     paused.awaitResume()
     sendMessage {
+      onEnd()
       if (failed == null) Message.Stream(id, mask or STREAM_END, null, null)
       else Message.Stream(id, mask or STREAM_CLOSE or STREAM_ERROR, null, remoteError(failed))
     }
@@ -314,7 +402,7 @@ public class Rpc(
           outgoing.removeFirstOrNull()
         } ?: return null
       try {
-        write(next)
+        transport.write(next)
       } catch (e: Throwable) {
         fail(e)
         return e
@@ -323,7 +411,7 @@ public class Rpc(
   }
 
   private suspend fun flush() {
-    while (state.withLock { outgoing.isNotEmpty() } && sending.tryLock()) {
+    while (state.withLock { failure == null && outgoing.isNotEmpty() } && sending.tryLock()) {
       try {
         drain()
       } finally {
@@ -336,48 +424,79 @@ public class Rpc(
     val waiting: List<CompletableDeferred<*>>
     val bodies: List<Channel<ByteArray>>
     val pauses: List<MutableStateFlow<Boolean>>
+    val senders: List<Job>
     state.withLock {
       if (failure != null) return
       failure = cause
-      outgoing.clear()
-      waiting = pending.values + requestAcks.values + replyAcks.values
-      bodies = (requestBodies.values + replyBodies.values).map { it.chunks }
-      pending.clear()
-      requestAcks.clear()
-      requestBodies.clear()
-      replyBodies.clear()
-      replyAcks.clear()
-      pauses = requestPauses.values + replyPauses.values
-      requestPauses.clear()
-      replyPauses.clear()
-      requestSenders.clear()
-      replySenders.clear()
-      earlyReplyAcks.clear()
+      if (cause !is ConnectionClosedException) outgoing.clear()
+      val outs = requestOut.values + replyOut.values
+      waiting = pending.values + outs.mapNotNull { it.accepted }
+      bodies = (requestIn.values + replyIn.values).map { it.chunks }
+      pauses = outs.map { it.paused }
+      senders = outs.mapNotNull { it.sender }
+      listOf(pending, requestIn, replyIn, requestOut, replyOut).forEach { it.clear() }
+      listOf(earlyReplyAcks, earlyReplyDestroys, liveRequests).forEach { it.clear() }
     }
     waiting.forEach { it.completeExceptionally(cause) }
     pauses.forEach { it.value = false }
     bodies.forEach { it.close(cause) }
+    val stop = CancellationException("Connection closed", cause)
+    senders.forEach { it.cancel(stop) }
+    closeTransport()
+    job.cancel(stop)
   }
 
+  @OptIn(DelicateCoroutinesApi::class)
+  private fun closeTransport() =
+    // Starts even on a cancelled scope, so the transport is always closed.
+    tasks.launch(start = CoroutineStart.ATOMIC) {
+      withContext(NonCancellable) {
+        sending.withLock {
+          while (true) {
+            val next = state.withLock { outgoing.removeFirstOrNull() } ?: break
+            try {
+              transport.write(next)
+            } catch (e: Throwable) {
+              break
+            }
+          }
+        }
+        try {
+          transport.close()
+        } catch (e: Throwable) {} finally {
+          transportClosed.complete(Unit)
+        }
+      }
+    }
+
   private suspend fun dispatch(message: Message) {
+    violation(message)?.let { throw MalformedFrameException(it) }
     when (message) {
       is Message.Request ->
-        if (message.id != 0uL) {
-          answer(message)
-        } else {
-          if (message.stream != 0uL) throw MalformedFrameException("an event cannot open a stream")
-          onEvent(IncomingEvent(message.command, message.data!!))
-        }
+        if (message.id != 0uL) answer(message)
+        else receiveEvent(IncomingEvent(message.command, message.data!!))
       is Message.Response -> {
         val error = message.error
         if (error == null && message.stream != 0uL) {
           val (reply, accepted) =
             state.withLock {
-              if (message.id in replyBodies) return
-              pending.remove(message.id) to requestAcks.remove(message.id)
+              if (message.id in replyIn) return
+              pending.remove(message.id) to refuseRequestBody(message.id)
             }
+          if (reply == null && accepted == null) return
+          val exception = UnexpectedStreamException()
           accepted?.complete(false)
-          reply?.completeExceptionally(UnexpectedStreamException())
+          // The peer's writer waits for an ack that will never come, so its stream is destroyed.
+          queueSignals(
+            message.id,
+            RemoteError(exception.message.orEmpty(), "UNEXPECTED_STREAM", 0),
+          ) {
+            listOfNotNull(
+              (STREAM_RESPONSE or STREAM_DESTROY).takeIf { reply != null },
+              (STREAM_REQUEST or STREAM_CLOSE or STREAM_ERROR).takeIf { accepted != null },
+            )
+          }
+          reply?.completeExceptionally(exception)
           return
         }
         val reply: CompletableDeferred<ByteArray>?
@@ -385,98 +504,172 @@ public class Rpc(
         val chunks: Channel<ByteArray>?
         state.withLock {
           reply = pending.remove(message.id)
-          accepted = requestAcks.remove(message.id)
-          chunks = replyBodies.remove(message.id)?.chunks
+          accepted = refuseRequestBody(message.id)
+          chunks = replyIn.remove(message.id)?.chunks
         }
-        accepted?.complete(false)
+        if (accepted != null) closeRefused(message.id, accepted, error)
         if (error != null) {
           val exception = remoteException(error)
           reply?.completeExceptionally(exception)
           chunks?.close(exception)
         } else {
-          reply?.complete(message.data!!)
-          chunks?.trySend(message.data!!)
+          val data = message.data!!
+          reply?.complete(data)
+          if (data.isNotEmpty()) chunks?.trySend(data)
           chunks?.close()
         }
       }
       is Message.Stream -> {
-        if (message.id == 0uL) return
-        val flag = streamEvents.firstOrNull { message.flags and it != 0uL } ?: return
-        val event = if (flag == STREAM_DATA && message.data == null) STREAM_END else flag
-        when {
-          message.flags and STREAM_REQUEST != 0uL -> onRequestStream(message, event)
-          message.flags and STREAM_RESPONSE != 0uL -> onReplyStream(message, event)
-          else -> Unit
-        }
+        val event = message.flags and (STREAM_REQUEST or STREAM_RESPONSE or STREAM_ERROR).inv()
+        if (message.flags and STREAM_REQUEST != 0uL) onRequestStream(message, event)
+        else onReplyStream(message, event)
       }
     }
   }
 
+  // Why a valid peer would never send this frame, or null if it could.
+  private fun violation(message: Message): String? =
+    when (message) {
+      is Message.Request ->
+        when {
+          message.stream == 0uL -> null
+          message.id == 0uL -> "an event cannot open a stream"
+          message.stream != STREAM_OPEN -> "a request cannot have stream flags ${message.stream}"
+          else -> null
+        }
+      is Message.Response ->
+        when {
+          message.id == 0uL -> "a response needs a request id"
+          message.stream == 0uL -> null
+          message.error != null || message.stream != STREAM_OPEN ->
+            "a response cannot have stream flags ${message.stream}"
+          else -> null
+        }
+      is Message.Stream ->
+        when {
+          message.id == 0uL -> "a stream frame needs a request id"
+          message.flags !in streamFlags -> "a stream frame cannot have flags ${message.flags}"
+          else -> null
+        }
+    }
+
   private suspend fun onRequestStream(message: Message.Stream, event: ULong) {
     when {
-      event == STREAM_OPEN -> state.withLock { requestAcks.remove(message.id) }?.complete(true)
+      event == STREAM_OPEN ->
+        state.withLock { requestOut[message.id]?.takeAccepted() }?.complete(true)
       event == STREAM_PAUSE || event == STREAM_RESUME ->
-        state.withLock { requestPauses[message.id] }?.value = event == STREAM_PAUSE
+        state.withLock { requestOut[message.id] }?.paused?.value = event == STREAM_PAUSE
       event == STREAM_DATA ->
-        state
-          .withLock { requestBodies[message.id] }
-          ?.let { deliver(message.id, it, message.data!!) }
-      event == STREAM_END -> state.withLock { requestBodies.remove(message.id) }?.chunks?.close()
+        state.withLock { requestIn[message.id] }?.let { deliver(message.id, it, message.data!!) }
+      event == STREAM_END -> state.withLock { requestIn.remove(message.id) }?.chunks?.close()
       event == STREAM_CLOSE ->
         state
-          .withLock { requestBodies.remove(message.id) }
+          .withLock { requestIn.remove(message.id) }
           ?.chunks
           ?.close(message.error?.let(::remoteException))
-      event == STREAM_DESTROY -> state.withLock { requestSenders.remove(message.id) }?.cancel()
+      event == STREAM_DESTROY -> destroy(requestOut, message.id)
     }
+  }
+
+  // Takes the ack of a request body that a reply refuses. The caller closes the body itself, so its
+  // sender has nothing to close.
+  private fun refuseRequestBody(id: ULong): CompletableDeferred<Boolean>? {
+    val out = requestOut[id] ?: return null
+    return out.takeAccepted()?.also { out.isDone = true }
+  }
+
+  // A request body the peer never accepted will never be read, so its stream is closed.
+  private suspend fun closeRefused(
+    id: ULong,
+    accepted: CompletableDeferred<Boolean>,
+    error: RemoteError?,
+  ) {
+    accepted.complete(false)
+    queueSignals(id, error) {
+      listOf(STREAM_REQUEST or STREAM_CLOSE or if (error != null) STREAM_ERROR else 0uL)
+    }
+  }
+
+  // The peer can destroy a body before its sender has started, and a reply stream it opened early
+  // before the reply that streams it is sent.
+  private suspend fun destroy(outs: Map<ULong, OutgoingBody>, id: ULong, early: () -> Unit = {}) {
+    val sender = state.withLock {
+      val out = outs[id]
+      out?.isDone = true
+      val sender = out?.takeSender()
+      if (sender == null) early()
+      sender
+    }
+    sender?.cancel()
   }
 
   private suspend fun onReplyStream(message: Message.Stream, event: ULong) {
     when {
       event == STREAM_OPEN -> acceptReply(message.id)
       event == STREAM_PAUSE || event == STREAM_RESUME ->
-        state.withLock { replyPauses[message.id] }?.value = event == STREAM_PAUSE
+        state.withLock { replyOut[message.id] }?.paused?.value = event == STREAM_PAUSE
       event == STREAM_DATA ->
-        state.withLock { replyBodies[message.id] }?.let { deliver(message.id, it, message.data!!) }
+        state.withLock { replyIn[message.id] }?.let { deliver(message.id, it, message.data!!) }
       event == STREAM_END || event == STREAM_CLOSE -> {
+        val error = message.error
         val (chunks, accepted) =
-          state.withLock {
-            replyBodies.remove(message.id)?.chunks to requestAcks.remove(message.id)
-          }
-        accepted?.complete(false)
-        chunks?.close(if (event == STREAM_CLOSE) message.error?.let(::remoteException) else null)
+          state.withLock { replyIn.remove(message.id)?.chunks to refuseRequestBody(message.id) }
+        if (accepted != null) closeRefused(message.id, accepted, error)
+        chunks?.close(error?.let(::remoteException))
       }
-      event == STREAM_DESTROY -> state.withLock { replySenders.remove(message.id) }?.cancel()
+      event == STREAM_DESTROY ->
+        destroy(replyOut, message.id) {
+          if (earlyReplyAcks.remove(message.id)) earlyReplyDestroys += message.id
+        }
     }
   }
 
   private suspend fun answer(request: Message.Request) {
-    if (request.stream == 0uL) {
-      reply(request.id) { onRequest(IncomingRequest(request.command, request.data!!, null)) }
+    val inbox = if (request.stream != 0uL) Inbox(STREAM_REQUEST, maxBufferedBytes) else null
+    state.withLock {
+      if (!liveRequests.add(request.id)) {
+        throw MalformedFrameException("request ${request.id} is still in progress")
+      }
+      lastRequestId = maxOf(lastRequestId, request.id)
+      if (inbox != null) {
+        failure?.let { throw it }
+        requestIn[request.id] = inbox
+      }
+    }
+    if (inbox == null) {
+      val incoming = IncomingRequest(request.command, request.data!!, null)
+      launchWithCleanup({}, CoroutineStart.UNDISPATCHED) {
+        reply(request.id) { handler.handle(incoming) }
+      }
       return
     }
-    val inbox = Inbox(STREAM_REQUEST, maxBufferedBytes)
-    state.withLock {
-      failure?.let { throw it }
-      requestBodies[request.id] = inbox
-    }
-    val body =
+    val chunks =
       inbox.chunks
         .consumeAsFlow()
         .onStart {
           queueSignals(request.id) {
-            if (requestBodies[request.id] !== inbox) return@queueSignals emptyList()
-            inbox.opened = true
+            if (requestIn[request.id] !== inbox) return@queueSignals emptyList()
+            inbox.isOpened = true
             listOf(STREAM_REQUEST or STREAM_OPEN)
           }
         }
         .onEach { take(request.id, inbox, it) }
-        .onCompletion { stopReading(request.id, requestBodies) }
-    launchWithCleanup(scope, { stopReading(request.id, requestBodies) }) {
-      reply(request.id) { onRequest(IncomingRequest(request.command, ByteArray(0), body)) }?.join()
+        .onCompletion { stopReading(request.id, requestIn, it) }
+    val body = flow {
+      state.withLock {
+        if (inbox.isCollected) throw AlreadyReceivedException()
+        inbox.isCollected = true
+      }
+      emitAll(chunks)
+    }
+    launchWithCleanup({ stopReading(request.id, requestIn) }) {
+      reply(request.id) { handler.handle(IncomingRequest(request.command, ByteArray(0), body)) }
+        ?.join()
     }
   }
 
+  // A request stays live until its reply is sent, whole or streamed. One whose handler never
+  // replies is cancelled only when the connection fails, which forgets it.
   private suspend fun reply(id: ULong, handler: suspend () -> Reply): Job? {
     val reply =
       try {
@@ -495,39 +688,64 @@ public class Rpc(
     }
   }
 
+  // Starts inline, so handlers begin in the order of their frames, but the read goes on once one
+  // suspends.
+  private fun receiveEvent(event: IncomingEvent) =
+    launchWithCleanup({}, CoroutineStart.UNDISPATCHED) {
+      try {
+        handler.handle(event)
+      } catch (e: Throwable) {
+        if (e is CancellationException) currentCoroutineContext().ensureActive()
+        fail(e)
+      }
+    }
+
   private suspend fun streamReply(id: ULong, body: Flow<ByteArray>): Job? {
-    val accepted = CompletableDeferred<Unit>()
+    val accepted = CompletableDeferred<Boolean>()
     val paused = MutableStateFlow(false)
-    state.withLock {
-      failure?.let { throw it }
-      if (earlyReplyAcks.remove(id)) accepted.complete(Unit) else replyAcks[id] = accepted
-      replyPauses[id] = paused
+    val sender =
+      launchWithCleanup({
+        state.withLock {
+          replyOut.remove(id)
+          liveRequests.remove(id)
+        }
+      }) {
+        accepted.await()
+        sendBody(id, STREAM_RESPONSE, body, paused)
+      }
+    val running = state.withLock {
+      failure?.let {
+        sender.cancel()
+        throw it
+      }
+      // A sender launched on a cancelled scope never runs, so the reply fails instead.
+      if (sender.isCancelled) return@withLock false
+      if (earlyReplyDestroys.remove(id)) {
+        sender.cancel()
+      } else {
+        val early = earlyReplyAcks.remove(id)
+        if (early) accepted.complete(true)
+        replyOut[id] =
+          OutgoingBody(accepted.takeUnless { early }, paused).also { it.sender = sender }
+      }
+      true
+    }
+    if (!running) {
+      respond(id, 0u, error = remoteError(ConnectionClosedException()))
+      return null
     }
     respond(id, STREAM_OPEN)
-    return launchWithCleanup(
-      scope,
-      {
-        state.withLock {
-          replyAcks.remove(id)
-          replyPauses.remove(id)
-          replySenders.remove(id)
-        }
-      },
-    ) {
-      state.withLock { replySenders[id] = currentCoroutineContext().job }
-      accepted.await()
-      sendBody(id, STREAM_RESPONSE, body, paused)
-    }
+    return sender
   }
 
   @OptIn(DelicateCoroutinesApi::class)
   private fun launchWithCleanup(
-    scope: CoroutineScope,
     cleanup: suspend () -> Unit,
+    // Either start runs even on a cancelled scope, so cleanup always runs.
+    start: CoroutineStart = CoroutineStart.ATOMIC,
     block: suspend () -> Unit,
   ) =
-    // Starts even on a cancelled scope, so cleanup always runs.
-    scope.launch(start = CoroutineStart.ATOMIC) {
+    tasks.launch(start = start) {
       try {
         currentCoroutineContext().ensureActive()
         block()
@@ -550,23 +768,36 @@ public class Rpc(
     }
   }
 
-  private suspend fun stopReading(id: ULong, inboxes: MutableMap<ULong, Inbox>) =
+  // A collector that failed destroys the stream with its error, and a cancelled one without.
+  private suspend fun stopReading(
+    id: ULong,
+    inboxes: MutableMap<ULong, Inbox>,
+    cause: Throwable? = null,
+  ) =
     withContext(NonCancellable) {
-      queueSignals(id) {
+      val error = cause?.takeUnless { it is CancellationException }?.let(::remoteError)
+      queueSignals(id, error) {
         val inbox = inboxes.remove(id) ?: return@queueSignals emptyList()
         inbox.chunks.close()
         listOfNotNull(
-          (inbox.mask or STREAM_OPEN).takeIf { !inbox.opened },
-          inbox.mask or STREAM_DESTROY,
+          (inbox.mask or STREAM_OPEN).takeIf { !inbox.isOpened },
+          inbox.mask or STREAM_DESTROY or if (error != null) STREAM_ERROR else 0uL,
         )
       }
     }
 
-  private suspend fun queueSignals(id: ULong, signals: () -> List<ULong>) {
+  private suspend fun queueSignals(
+    id: ULong,
+    error: RemoteError? = null,
+    signals: () -> List<ULong>,
+  ) {
     val queued = state.withLock {
       if (failure != null) return@withLock false
       val flags = signals()
-      for (flag in flags) outgoing.addLast(encode(frame, Message.Stream(id, flag, null, null)))
+      for (flag in flags) {
+        val carried = if (flag and STREAM_ERROR != 0uL) error else null
+        outgoing.addLast(encode(frame, Message.Stream(id, flag, null, carried)))
+      }
       flags.isNotEmpty()
     }
     if (queued) flush()
@@ -574,12 +805,21 @@ public class Rpc(
 
   private suspend fun acceptReply(id: ULong) {
     val accepted = state.withLock {
-      val accepted = replyAcks.remove(id)
-      if (accepted == null) earlyReplyAcks += id
+      val accepted = replyOut[id]?.takeAccepted()
+      if (accepted == null && canAnswer(id) && earlyReplyAcks.add(id)) {
+        // Dropping an ack a valid peer sent would leave its reply waiting with nothing to show why.
+        if (earlyReplyAcks.size + earlyReplyDestroys.size > MAX_EARLY_REPLY_ACKS) {
+          throw MalformedFrameException("too many acks for replies not yet sent")
+        }
+      }
       accepted
     }
-    accepted?.complete(Unit)
+    accepted?.complete(true)
   }
+
+  // The peer numbers its requests in order and may ack a reply before it sends the request, so an
+  // ack is kept for a request in progress or one it has yet to send.
+  private fun canAnswer(id: ULong) = id in liveRequests || id > lastRequestId
 
   private suspend fun respond(
     id: ULong,
@@ -588,7 +828,12 @@ public class Rpc(
     error: RemoteError? = null,
   ) {
     state.withLock {
-      if (stream == 0uL) earlyReplyAcks.remove(id)
+      if (failure != null) return
+      if (stream == 0uL) {
+        liveRequests.remove(id)
+        earlyReplyAcks.remove(id)
+        earlyReplyDestroys.remove(id)
+      }
       outgoing.addLast(encode(frame, Message.Response(id, stream, data, error)))
     }
     flush()
@@ -604,10 +849,11 @@ public class Rpc(
  *
  * @property command the command the request names.
  * @property data the request's payload, empty when it streams a [body].
- * @property body the request's streamed payload, or null. Collecting it accepts the stream, and it
- *   can be collected once, until the reply is sent or a streamed reply ends; a later collection
- *   ends empty. Stopping before its end, or not collecting it to the end in that time, tells a peer
- *   that has started streaming to stop sending.
+ * @property body the request's streamed payload, or null. Collecting it accepts the stream. It can
+ *   be collected only once, and a second collection throws an [AlreadyReceivedException]. A
+ *   collection that starts after the reply is sent, or after a streamed reply ends, ends empty.
+ *   Stopping before its end, or not collecting it to the end in that time, tells a peer that has
+ *   started streaming to stop sending, with the error the collector failed with, if any.
  */
 public class IncomingRequest
 internal constructor(
@@ -627,26 +873,41 @@ internal constructor(public val command: ULong, public val data: ByteArray)
 
 private const val HIGH_WATER_MARK = 16 * 1024
 
-private val DEFAULT_MAX_BUFFERED_BYTES: UInt = 16u * 1024u * 1024u
+private const val MAX_EARLY_REPLY_ACKS = 1024
 
-private class Inbox(val mask: ULong, private val maxBufferedBytes: UInt) {
+private const val DEFAULT_MAX_BUFFERED_BYTES: Int = 16 * 1024 * 1024
+
+private class OutgoingBody(
+  var accepted: CompletableDeferred<Boolean>?,
+  val paused: MutableStateFlow<Boolean>,
+) {
+  var sender: Job? = null
+  var isDone = false
+
+  fun takeAccepted() = accepted.also { accepted = null }
+
+  fun takeSender() = sender.also { sender = null }
+}
+
+private class Inbox(val mask: ULong, private val maxBufferedBytes: Int) {
   val chunks = Channel<ByteArray>(Channel.UNLIMITED)
-  var opened = false
+  var isOpened = false
+  var isCollected = false
   private var buffered = 0L
-  private var paused = false
+  private var isPaused = false
 
   fun add(size: Int): Boolean {
-    if (buffered + size > maxBufferedBytes.toLong()) throw StreamOverflowException()
+    if (buffered + size > maxBufferedBytes) throw StreamOverflowException()
     buffered += size
-    if (paused || buffered < HIGH_WATER_MARK) return false
-    paused = true
+    if (isPaused || buffered < HIGH_WATER_MARK) return false
+    isPaused = true
     return true
   }
 
   fun remove(size: Int): Boolean {
     buffered -= size
-    if (!paused || buffered >= HIGH_WATER_MARK) return false
-    paused = false
+    if (!isPaused || buffered >= HIGH_WATER_MARK) return false
+    isPaused = false
     return true
   }
 }

@@ -2,12 +2,22 @@ package to.holepunch.bare.rpc
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.yield
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class ResponseStreamTest {
   private val open = "0400000002010001" // response id 1, opens a stream
   private val ack = "050000000301fd0102" // stream id 1, response open
@@ -29,8 +39,7 @@ class ResponseStreamTest {
     val sent = mutableListOf<String>()
     val rpc =
       Rpc(
-        remote.data,
-        write = { sent += it.toHexString() },
+        TestTransport(remote.data, { sent += it.toHexString() }),
         onRequest = { Reply.Stream(flowOf("hi".encodeToByteArray())) },
         scope = backgroundScope,
       )
@@ -46,8 +55,7 @@ class ResponseStreamTest {
     val sent = mutableListOf<String>()
     val rpc =
       Rpc(
-        remote.data,
-        write = { sent += it.toHexString() },
+        TestTransport(remote.data, { sent += it.toHexString() }),
         onRequest = { Reply.Stream(flowOf("hi".encodeToByteArray())) },
         scope = backgroundScope,
       )
@@ -64,8 +72,7 @@ class ResponseStreamTest {
     val sent = mutableListOf<String>()
     val rpc =
       Rpc(
-        remote.data,
-        write = { sent += it.toHexString() },
+        TestTransport(remote.data, { sent += it.toHexString() }),
         onRequest = { Reply.Stream(flowOf("hi".encodeToByteArray())) },
         scope = backgroundScope,
       )
@@ -81,8 +88,7 @@ class ResponseStreamTest {
     val sent = mutableListOf<String>()
     val rpc =
       Rpc(
-        remote.data,
-        write = { sent += it.toHexString() },
+        TestTransport(remote.data, { sent += it.toHexString() }),
         onRequest = { Reply.Stream(flow { throw RemoteException("boom", "E_BOOM", 1) }) },
         scope = backgroundScope,
       )
@@ -99,8 +105,7 @@ class ResponseStreamTest {
     val sent = mutableListOf<String>()
     val rpc =
       Rpc(
-        remote.data,
-        write = { sent += it.toHexString() },
+        TestTransport(remote.data, { sent += it.toHexString() }),
         onRequest = { Reply.Stream(flowOf("hi".encodeToByteArray())) },
         scope = backgroundScope,
       )
@@ -119,8 +124,7 @@ class ResponseStreamTest {
     val sent = mutableListOf<String>()
     val rpc =
       Rpc(
-        remote.data,
-        write = { sent += it.toHexString() },
+        TestTransport(remote.data, { sent += it.toHexString() }),
         onRequest = { Reply.Stream(flowOf("hi".encodeToByteArray())) },
         scope = backgroundScope,
       )
@@ -137,8 +141,7 @@ class ResponseStreamTest {
     val sent = mutableListOf<String>()
     val rpc =
       Rpc(
-        remote.data,
-        write = { sent += it.toHexString() },
+        TestTransport(remote.data, { sent += it.toHexString() }),
         onRequest = { Reply.Stream(flowOf("hi".encodeToByteArray())) },
         scope = backgroundScope,
       )
@@ -157,8 +160,7 @@ class ResponseStreamTest {
     val sent = mutableListOf<String>()
     val rpc =
       Rpc(
-        remote.data,
-        write = { sent += it.toHexString() },
+        TestTransport(remote.data, { sent += it.toHexString() }),
         onRequest = { Reply.Stream(flowOf("hi".encodeToByteArray())) },
         scope = backgroundScope,
       )
@@ -169,5 +171,89 @@ class ResponseStreamTest {
     remote.send(resume.hexToByteArray())
     yield()
     assertEquals(listOf(open), sent)
+  }
+
+  @Test
+  fun `a destroy that comes with the request stops the reply body`() = runTest {
+    val remote = Remote(this)
+    val sent = mutableListOf<String>()
+    val rpc =
+      Rpc(
+        TestTransport(remote.data, { sent += it.toHexString() }),
+        onRequest = { Reply.Stream(flowOf("hi".encodeToByteArray())) },
+        scope = backgroundScope,
+      )
+    remote.send((request + ack + destroy).hexToByteArray())
+    yield()
+    assertEquals(listOf(open), sent)
+  }
+
+  @Test
+  fun `close stops a reply body that is still running`() = runTest {
+    val remote = Remote(this)
+    val sent = mutableListOf<String>()
+    val stopped = CompletableDeferred<Unit>()
+    val body = flow {
+      emit("hi".encodeToByteArray())
+      try {
+        awaitCancellation()
+      } finally {
+        stopped.complete(Unit)
+      }
+    }
+    val rpc =
+      Rpc(
+        TestTransport(remote.data, { sent += it.toHexString() }),
+        onRequest = { Reply.Stream(body) },
+        scope = backgroundScope,
+      )
+    remote.send(request.hexToByteArray())
+    remote.send(ack.hexToByteArray())
+    assertEquals(listOf(open, data), sent)
+    rpc.close()
+    runCurrent()
+    assertTrue(stopped.isCompleted)
+  }
+
+  @Test
+  fun `a reply stream the peer destroys before the reply is not streamed`() = runTest {
+    val remote = Remote(this)
+    val sent = mutableListOf<String>()
+    val replying = CompletableDeferred<Unit>()
+    val rpc =
+      Rpc(
+        TestTransport(remote.data, { sent += it.toHexString() }),
+        onRequest = {
+          replying.await()
+          Reply.Stream(flowOf("hi".encodeToByteArray()))
+        },
+        scope = backgroundScope,
+      )
+    remote.send(Message.Request(1u, 7u, STREAM_OPEN, null))
+    remote.send((ack + destroy).hexToByteArray())
+    replying.complete(Unit)
+    runCurrent()
+    assertTrue(open in sent)
+    assertTrue(data !in sent && end !in sent)
+    assertEquals(0, rpc.tracked())
+  }
+
+  @Test
+  fun `a streamed reply on a cancelled scope fails the request instead of opening`() = runTest {
+    val remote = Remote(this)
+    val sent = mutableListOf<String>()
+    val scope = CoroutineScope(backgroundScope.coroutineContext + Job())
+    Rpc(
+      TestTransport(remote.data, { sent += it.toHexString() }),
+      onRequest = {
+        scope.cancel()
+        Reply.Stream(flowOf("hi".encodeToByteArray()))
+      },
+      scope = scope,
+    )
+    remote.send(request.hexToByteArray())
+    val reply = Messages.decode(sent.single().hexToByteArray()).message as Message.Response
+    assertEquals(1uL to 0uL, reply.id to reply.stream)
+    assertNotNull(reply.error)
   }
 }

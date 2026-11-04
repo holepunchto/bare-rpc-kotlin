@@ -15,7 +15,7 @@ class MessagesTest {
     val bytes = Messages.encode(request)
     val decoded = Messages.decode(bytes)
     assertEquals(request, decoded.message)
-    assertEquals(bytes.size, decoded.read)
+    assertEquals(bytes.size, decoded.bytesRead)
   }
 
   @Test

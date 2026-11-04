@@ -3,10 +3,13 @@ package to.holepunch.bare.rpc
 import to.holepunch.compactEncoding.State
 import to.holepunch.compactEncoding.uint32
 
-internal val DEFAULT_MAX_FRAME_SIZE: UInt = 16u * 1024u * 1024u
+internal const val DEFAULT_MAX_FRAME_SIZE: Int = 16 * 1024 * 1024
 
-internal class FrameSplitter(private val maxFrameSize: UInt = DEFAULT_MAX_FRAME_SIZE) {
+internal class FrameSplitter(private val maxFrameSize: Int = DEFAULT_MAX_FRAME_SIZE) {
   private var buffered = ByteArray(0)
+
+  val hasPartialFrame: Boolean
+    get() = buffered.isNotEmpty()
 
   fun push(bytes: ByteArray): List<ByteArray> {
     buffered += bytes
@@ -15,12 +18,9 @@ internal class FrameSplitter(private val maxFrameSize: UInt = DEFAULT_MAX_FRAME_
     while (state.remaining >= 4) {
       val mark = state.start
       val length = uint32.decode(state)
-      if (4uL + length > maxFrameSize) {
-        if (frames.isEmpty()) {
-          throw MalformedFrameException(
-            "frame of ${4uL + length} bytes exceeds the cap of $maxFrameSize bytes"
-          )
-        }
+      val size = 4L + length.toLong()
+      if (size > maxFrameSize) {
+        if (frames.isEmpty()) throw FrameTooLargeException(size, maxFrameSize)
         state.start = mark
         break
       }

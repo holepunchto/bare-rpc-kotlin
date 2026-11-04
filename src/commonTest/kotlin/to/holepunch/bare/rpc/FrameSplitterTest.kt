@@ -45,25 +45,25 @@ class FrameSplitterTest {
 
   @Test
   fun `a length past the default cap fails`() {
-    assertFailsWith<MalformedFrameException> { FrameSplitter().push("ffffffff".hexToByteArray()) }
+    assertFailsWith<FrameTooLargeException> { FrameSplitter().push("ffffffff".hexToByteArray()) }
   }
 
   @Test
   fun `a frame longer than the cap fails as soon as its length arrives`() {
-    assertFailsWith<MalformedFrameException> {
-      FrameSplitter(maxFrameSize = 8u).push("05000000".hexToByteArray())
+    assertFailsWith<FrameTooLargeException> {
+      FrameSplitter(maxFrameSize = 8).push("05000000".hexToByteArray())
     }
   }
 
   @Test
   fun `a frame as long as the cap comes out`() {
-    assertEquals(listOf(first.toList()), FrameSplitter(maxFrameSize = 9u).frames(first))
+    assertEquals(listOf(first.toList()), FrameSplitter(maxFrameSize = 9).frames(first))
   }
 
   @Test
   fun `frames before a length past the cap come out before it fails`() {
     val splitter = FrameSplitter()
     assertEquals(listOf(first.toList()), splitter.frames(first + "ffffffff".hexToByteArray()))
-    assertFailsWith<MalformedFrameException> { splitter.push(ByteArray(0)) }
+    assertFailsWith<FrameTooLargeException> { splitter.push(ByteArray(0)) }
   }
 }
