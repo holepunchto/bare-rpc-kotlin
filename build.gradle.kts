@@ -23,7 +23,7 @@ kotlin {
 
   jvm { compilerOptions { jvmTarget = JvmTarget.JVM_11 } }
 
-  js { nodejs() }
+  js { nodejs { testTask { useMocha { timeout = "30s" } } } }
 
   android {
     namespace = "to.holepunch.bare.rpc"
