@@ -23,6 +23,22 @@ sealed interface to.holepunch.bare.rpc/Message { // to.holepunch.bare.rpc/Messag
     abstract val id // to.holepunch.bare.rpc/Message.id|{}id[0]
         abstract fun <get-id>(): kotlin/ULong // to.holepunch.bare.rpc/Message.id.<get-id>|<get-id>(){}[0]
 
+    final class Cancel : to.holepunch.bare.rpc/Message { // to.holepunch.bare.rpc/Message.Cancel|null[0]
+        constructor <init>(kotlin/ULong, to.holepunch.bare.rpc/RemoteError) // to.holepunch.bare.rpc/Message.Cancel.<init>|<init>(kotlin.ULong;to.holepunch.bare.rpc.RemoteError){}[0]
+
+        final val error // to.holepunch.bare.rpc/Message.Cancel.error|{}error[0]
+            final fun <get-error>(): to.holepunch.bare.rpc/RemoteError // to.holepunch.bare.rpc/Message.Cancel.error.<get-error>|<get-error>(){}[0]
+        final val id // to.holepunch.bare.rpc/Message.Cancel.id|{}id[0]
+            final fun <get-id>(): kotlin/ULong // to.holepunch.bare.rpc/Message.Cancel.id.<get-id>|<get-id>(){}[0]
+
+        final fun component1(): kotlin/ULong // to.holepunch.bare.rpc/Message.Cancel.component1|component1(){}[0]
+        final fun component2(): to.holepunch.bare.rpc/RemoteError // to.holepunch.bare.rpc/Message.Cancel.component2|component2(){}[0]
+        final fun copy(kotlin/ULong = ..., to.holepunch.bare.rpc/RemoteError = ...): to.holepunch.bare.rpc/Message.Cancel // to.holepunch.bare.rpc/Message.Cancel.copy|copy(kotlin.ULong;to.holepunch.bare.rpc.RemoteError){}[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // to.holepunch.bare.rpc/Message.Cancel.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // to.holepunch.bare.rpc/Message.Cancel.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // to.holepunch.bare.rpc/Message.Cancel.toString|toString(){}[0]
+    }
+
     final class Request : to.holepunch.bare.rpc/Message { // to.holepunch.bare.rpc/Message.Request|null[0]
         constructor <init>(kotlin/ULong, kotlin/ULong, kotlin/ULong, kotlin/ByteArray?) // to.holepunch.bare.rpc/Message.Request.<init>|<init>(kotlin.ULong;kotlin.ULong;kotlin.ULong;kotlin.ByteArray?){}[0]
 
@@ -164,6 +180,13 @@ final class to.holepunch.bare.rpc/RemoteException : to.holepunch.bare.rpc/RpcExc
         final fun <get-code>(): kotlin/String // to.holepunch.bare.rpc/RemoteException.code.<get-code>|<get-code>(){}[0]
     final val errno // to.holepunch.bare.rpc/RemoteException.errno|{}errno[0]
         final fun <get-errno>(): kotlin/Long // to.holepunch.bare.rpc/RemoteException.errno.<get-errno>|<get-errno>(){}[0]
+}
+
+final class to.holepunch.bare.rpc/RequestCancelledException : kotlin.coroutines.cancellation/CancellationException { // to.holepunch.bare.rpc/RequestCancelledException|null[0]
+    final val code // to.holepunch.bare.rpc/RequestCancelledException.code|{}code[0]
+        final fun <get-code>(): kotlin/String // to.holepunch.bare.rpc/RequestCancelledException.code.<get-code>|<get-code>(){}[0]
+    final val errno // to.holepunch.bare.rpc/RequestCancelledException.errno|{}errno[0]
+        final fun <get-errno>(): kotlin/Long // to.holepunch.bare.rpc/RequestCancelledException.errno.<get-errno>|<get-errno>(){}[0]
 }
 
 final class to.holepunch.bare.rpc/Rpc { // to.holepunch.bare.rpc/Rpc|null[0]

@@ -35,6 +35,9 @@ class RequestFlowTest {
   private val end = "050000000301fd2002" // stream id 1, response end
   private val destroy = "050000000301fd4002" // stream id 1, response destroy
   private val close = "050000000301fd0202" // stream id 1, response close
+  private val cancel =
+    "2300000004011552657175657374207761732063616e63656c6c65640943414e43454c4c454400" // cancel id 1,
+  // CANCELLED
   // stream id 1, response data with an error: "boom", "E_BOOM", errno 1
   private val dataError = "120000000301fd900204626f6f6d06455f424f4f4d02"
   // stream id 1, response close error: "boom", "E_BOOM", errno 1
@@ -300,7 +303,7 @@ class RequestFlowTest {
   }
 
   @Test
-  fun `stopping a reply flow early sends a destroy`() = runTest {
+  fun `stopping a reply flow early cancels the request`() = runTest {
     val remote = Remote(this)
     val sent = mutableListOf<String>()
     val rpc = Rpc(TestTransport(remote.data, { sent += it.toHexString() }), scope = backgroundScope)
@@ -309,7 +312,7 @@ class RequestFlowTest {
     remote.send(open.hexToByteArray())
     remote.send(data.hexToByteArray())
     assertEquals("hi", chunk.await().decodeToString())
-    assertEquals(listOf(request, ack, destroy), sent)
+    assertEquals(listOf(request, ack, cancel), sent)
   }
 
   @Test
@@ -436,7 +439,7 @@ class RequestFlowTest {
   }
 
   @Test
-  fun `a cancelled collector sends a plain destroy`() = runTest {
+  fun `a cancelled collector cancels the request`() = runTest {
     val remote = Remote(this)
     val sent = mutableListOf<String>()
     val rpc = Rpc(TestTransport(remote.data, { sent += it.toHexString() }), scope = backgroundScope)
@@ -448,6 +451,6 @@ class RequestFlowTest {
     remote.send(data.hexToByteArray())
     collecting.cancel()
     runCurrent()
-    assertEquals(listOf(request, ack, destroy), sent)
+    assertEquals(listOf(request, ack, cancel), sent)
   }
 }

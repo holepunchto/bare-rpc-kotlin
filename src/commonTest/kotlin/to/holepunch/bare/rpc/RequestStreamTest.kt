@@ -31,6 +31,9 @@ class RequestStreamTest {
   // stream id 1, request close error: "boom", "E_BOOM", errno 1
   private val closeError = "120000000301fd820104626f6f6d06455f424f4f4d02"
   private val destroy = "050000000301fd4001" // stream id 1, request destroy
+  private val cancel =
+    "2300000004011552657175657374207761732063616e63656c6c65640943414e43454c4c454400" // cancel id 1,
+  // CANCELLED
   // stream id 1, request destroy error: "boom", "E_BOOM", errno 1
   private val destroyError = "120000000301fdc00104626f6f6d06455f424f4f4d02"
   private val ok = "0700000002010000026f6b" // response id 1, "ok"
@@ -294,7 +297,7 @@ class RequestStreamTest {
   }
 
   @Test
-  fun `cancelling a request whose body streams closes the stream`() = runTest {
+  fun `cancelling a request whose body streams cancels it without closing the stream`() = runTest {
     val remote = Remote(this)
     val sent = mutableListOf<String>()
     val rpc = Rpc(TestTransport(remote.data, { sent += it.toHexString() }), scope = backgroundScope)
@@ -307,11 +310,11 @@ class RequestStreamTest {
     remote.send(ack.hexToByteArray())
     reply.cancel()
     runCurrent()
-    assertEquals(listOf(open, data, close), sent)
+    assertEquals(listOf(open, data, cancel), sent)
   }
 
   @Test
-  fun `cancelling a request before the peer accepts its body closes the stream`() = runTest {
+  fun `cancelling a request before the peer accepts its body sends no body`() = runTest {
     val remote = Remote(this)
     val sent = mutableListOf<String>()
     val rpc = Rpc(TestTransport(remote.data, { sent += it.toHexString() }), scope = backgroundScope)
@@ -319,9 +322,9 @@ class RequestStreamTest {
     yield()
     reply.cancel()
     runCurrent()
-    assertEquals(listOf(open, close), sent)
+    assertEquals(listOf(open, cancel), sent)
     remote.send(ack.hexToByteArray())
-    assertEquals(listOf(open, close), sent)
+    assertEquals(listOf(open, cancel), sent)
   }
 
   @Test
@@ -334,6 +337,6 @@ class RequestStreamTest {
     remote.send((ack + destroy).hexToByteArray())
     reply.cancel()
     runCurrent()
-    assertEquals(listOf(open), sent)
+    assertEquals(listOf(open, cancel), sent)
   }
 }

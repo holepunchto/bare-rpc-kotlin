@@ -62,6 +62,7 @@ const rpc = new RPC(stream, async (request) => {
     }
     case 10: {
       const response = request.createResponseStream()
+      response.on('error', () => {})
       response.on('close', () => rpc.event(10).send(request.data))
       flood(response, request.data)
       return

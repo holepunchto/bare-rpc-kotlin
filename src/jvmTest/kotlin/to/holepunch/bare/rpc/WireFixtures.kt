@@ -78,6 +78,8 @@ internal fun frameSequence(family: String): FrameSequence =
 
 internal fun messageOf(descriptor: JsonObject): Message {
   val id = descriptor.uint("id")
+  if (descriptor.uint("type") == 4uL)
+    return Message.Cancel(id, checkNotNull(descriptor.remoteError()))
   val stream = descriptor.uint("stream")
   val data = descriptor.getValue("data").let { if (it is JsonNull) null else it.hex() }
   return when (descriptor.uint("type")) {
@@ -122,6 +124,14 @@ internal fun descriptorOf(message: Message): JsonObject =
           "stream" to message.flags.json(),
           "error" to message.error.json(),
           "data" to message.data.json(),
+        )
+      )
+    is Message.Cancel ->
+      JsonObject(
+        mapOf(
+          "type" to JsonPrimitive(4),
+          "id" to message.id.json(),
+          "error" to message.error.json(),
         )
       )
   }

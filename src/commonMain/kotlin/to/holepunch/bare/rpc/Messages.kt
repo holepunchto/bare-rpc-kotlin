@@ -101,6 +101,13 @@ public sealed interface Message {
     override fun toString(): String =
       "Stream(id=$id, flags=$flags, data=${data?.contentToString()}, error=$error)"
   }
+
+  /**
+   * A cancel of the request with the same [id], which tells the peer to stop handling it.
+   *
+   * @property error the error the request is cancelled with.
+   */
+  public data class Cancel(override val id: ULong, public val error: RemoteError) : Message
 }
 
 /**
@@ -186,6 +193,7 @@ internal val frame: Codec<Message> =
 private const val REQUEST = 1uL
 private const val RESPONSE = 2uL
 private const val STREAM = 3uL
+private const val CANCEL = 4uL
 
 internal const val STREAM_OPEN = 0x1uL
 internal const val STREAM_CLOSE = 0x2uL
@@ -246,6 +254,7 @@ private val body: Codec<Message> =
             if (error == null && flags and STREAM_DATA != 0uL) buffer.decode(state) else null
           Message.Stream(id, flags, data, error)
         }
+        CANCEL -> Message.Cancel(id, remoteError.decode(state))
         else -> throw UnknownMessageException(type)
       }
     }
@@ -279,6 +288,11 @@ private val body: Codec<Message> =
               put(remoteError, requireNotNull(value.error) { "the error flag needs an error" })
             value.flags and STREAM_DATA != 0uL -> put(buffer, value.data ?: ByteArray(0))
           }
+        }
+        is Message.Cancel -> {
+          put(uint, CANCEL)
+          put(uint, value.id)
+          put(remoteError, value.error)
         }
       }
     }

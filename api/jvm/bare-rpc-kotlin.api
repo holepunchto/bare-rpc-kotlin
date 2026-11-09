@@ -51,6 +51,19 @@ public abstract interface class to/holepunch/bare/rpc/Message {
 	public abstract fun getId-s-VKNKU ()J
 }
 
+public final class to/holepunch/bare/rpc/Message$Cancel : to/holepunch/bare/rpc/Message {
+	public synthetic fun <init> (JLto/holepunch/bare/rpc/RemoteError;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1-s-VKNKU ()J
+	public final fun component2 ()Lto/holepunch/bare/rpc/RemoteError;
+	public final fun copy-4PLdz1A (JLto/holepunch/bare/rpc/RemoteError;)Lto/holepunch/bare/rpc/Message$Cancel;
+	public static synthetic fun copy-4PLdz1A$default (Lto/holepunch/bare/rpc/Message$Cancel;JLto/holepunch/bare/rpc/RemoteError;ILjava/lang/Object;)Lto/holepunch/bare/rpc/Message$Cancel;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getError ()Lto/holepunch/bare/rpc/RemoteError;
+	public fun getId-s-VKNKU ()J
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
 public final class to/holepunch/bare/rpc/Message$Request : to/holepunch/bare/rpc/Message {
 	public synthetic fun <init> (JJJ[BLkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public fun equals (Ljava/lang/Object;)Z
@@ -122,6 +135,11 @@ public final class to/holepunch/bare/rpc/Reply$Data : to/holepunch/bare/rpc/Repl
 public final class to/holepunch/bare/rpc/Reply$Stream : to/holepunch/bare/rpc/Reply {
 	public fun <init> (Lkotlinx/coroutines/flow/Flow;)V
 	public final fun getBody ()Lkotlinx/coroutines/flow/Flow;
+}
+
+public final class to/holepunch/bare/rpc/RequestCancelledException : java/util/concurrent/CancellationException {
+	public final fun getCode ()Ljava/lang/String;
+	public final fun getErrno ()J
 }
 
 public final class to/holepunch/bare/rpc/Rpc {

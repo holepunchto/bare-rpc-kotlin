@@ -46,6 +46,7 @@ class PeerValidationTest {
       "080000000301fda001000000", // a stream end with an error
       "0700000002010200026869", // a response whose error flag is 2
       "070000000201ff00026869", // a response whose error flag is 0xff
+      "050000000400000000", // a cancel with id 0
     )
 
   private val validEvents =
