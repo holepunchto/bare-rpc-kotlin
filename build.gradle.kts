@@ -12,7 +12,7 @@ plugins {
 
 group = "com.github.holepunchto"
 
-version = System.getenv("VERSION") ?: "0.5.0"
+version = System.getenv("VERSION") ?: "0.6.0"
 
 kotlin {
   explicitApi()
