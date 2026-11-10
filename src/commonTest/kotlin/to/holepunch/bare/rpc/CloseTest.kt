@@ -6,6 +6,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
@@ -149,5 +150,55 @@ class CloseTest {
     remote.send(Message.Request(1u, 7u, 0u, ByteArray(0)))
     withTimeout(1.seconds) { rpc.close() }
     assertFailsWith<ConnectionClosedException> { rpc.request(0u, ByteArray(0)) }
+  }
+
+  @Test
+  fun `close cancels a running event handler`() = runTest {
+    val remote = Remote(this)
+    val cancelled = CompletableDeferred<Unit>()
+    val rpc =
+      Rpc(
+        TestTransport(remote.data),
+        onEvent = {
+          try {
+            awaitCancellation()
+          } catch (e: CancellationException) {
+            cancelled.complete(Unit)
+            throw e
+          }
+        },
+        scope = backgroundScope,
+      )
+    remote.send(Message.Request(0u, 7u, 0u, ByteArray(0)))
+    rpc.close()
+    withTimeout(1.seconds) { cancelled.await() }
+  }
+
+  @Test
+  fun `a handler that closes the connection is cancelled once close returns`() = runTest {
+    val remote = Remote(this)
+    val steps = mutableListOf<String>()
+    val done = CompletableDeferred<Unit>()
+    lateinit var rpc: Rpc
+    rpc =
+      Rpc(
+        TestTransport(remote.data),
+        onRequest = {
+          try {
+            rpc.close()
+            steps += "closed"
+            awaitCancellation()
+          } catch (e: CancellationException) {
+            steps += "cancelled"
+            throw e
+          } finally {
+            done.complete(Unit)
+          }
+        },
+        scope = backgroundScope,
+      )
+    remote.send(Message.Request(1u, 7u, 0u, ByteArray(0)))
+    withTimeout(1.seconds) { done.await() }
+    assertEquals(listOf("closed", "cancelled"), steps)
   }
 }

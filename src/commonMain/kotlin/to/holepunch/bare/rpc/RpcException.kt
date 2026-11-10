@@ -1,5 +1,7 @@
 package to.holepunch.bare.rpc
 
+import kotlinx.coroutines.CancellationException
+
 /** A failure of an RPC exchange, raised by this side or reported by the peer. */
 public sealed class RpcException(message: String, cause: Throwable? = null) :
   Exception(message, cause)
@@ -57,6 +59,17 @@ public class AlreadyReceivedException internal constructor() :
 
 /** The connection was closed, by [Rpc.close] or by the end of the data received from the peer. */
 public class ConnectionClosedException internal constructor() : RpcException("Connection closed")
+
+/**
+ * The peer cancelled the request that a handler answers, by cancelling the call that sent it or
+ * when that call timed out. The handler's coroutine is cancelled with it.
+ *
+ * @property code the cancel's code: `CANCELLED`, `TIMEOUT`, or another the peer chose.
+ * @property errno the cancel's number.
+ */
+public class RequestCancelledException
+internal constructor(message: String, public val code: String, public val errno: Long) :
+  CancellationException(message)
 
 internal fun remoteException(error: RemoteError) =
   RemoteException(error.message, error.code, error.errno)
