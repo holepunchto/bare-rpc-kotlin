@@ -332,7 +332,7 @@ public class Rpc(
         sender = launchRequestBody(id, body, accepted, paused) { inbox.chunks.close(it) }
       }
       for (chunk in inbox.chunks) {
-        take(id, inbox, chunk)
+        take(id, replyIn, inbox, chunk)
         try {
           emit(chunk)
         } catch (e: Throwable) {
@@ -723,7 +723,7 @@ public class Rpc(
             listOf(STREAM_REQUEST or STREAM_OPEN)
           }
         }
-        .onEach { take(id, inbox, it) }
+        .onEach { take(id, requestIn, inbox, it) }
         .onCompletion { stopReading(id, requestIn, it) }
     return flow {
       state.withLock {
@@ -742,12 +742,12 @@ public class Rpc(
         handler()
       } catch (e: Throwable) {
         if (e is CancellationException) currentCoroutineContext().ensureActive()
-        respond(id, 0u, error = remoteError(e))
+        respond(id, error = remoteError(e))
         return null
       }
     return when (reply) {
       is Reply.Data -> {
-        respond(id, 0u, data = reply.data)
+        respond(id, data = reply.data)
         null
       }
       is Reply.Stream -> streamReply(id, reply.body)
@@ -804,7 +804,7 @@ public class Rpc(
         if (!kept) sender.cancel()
       }
     if (!running) {
-      respond(id, 0u, error = remoteError(ConnectionClosedException()))
+      respond(id, error = remoteError(ConnectionClosedException()))
       return null
     }
     flush()
@@ -836,8 +836,10 @@ public class Rpc(
     inbox.chunks.trySend(data)
   }
 
-  private suspend fun take(id: ULong, inbox: Inbox, data: ByteArray) {
+  // A stream that has ended or been cancelled still hands out what it buffered, without signals.
+  private suspend fun take(id: ULong, inboxes: Map<ULong, Inbox>, inbox: Inbox, data: ByteArray) {
     queueSignals(id) {
+      if (inboxes[id] !== inbox) return@queueSignals emptyList()
       listOfNotNull((inbox.mask or STREAM_RESUME).takeIf { inbox.remove(data.size) })
     }
   }
@@ -897,19 +899,16 @@ public class Rpc(
 
   private suspend fun respond(
     id: ULong,
-    stream: ULong,
     data: ByteArray? = null,
     error: RemoteError? = null,
   ) {
     state.withLock {
       // A request the peer has cancelled is no longer live, so its answer is dropped.
       if (failure != null || id !in liveRequests) return
-      if (stream == 0uL) {
-        liveRequests.remove(id)
-        earlyReplyAcks.remove(id)
-        earlyReplyDestroys.remove(id)
-      }
-      outgoing.addLast(encode(frame, Message.Response(id, stream, data, error)))
+      liveRequests.remove(id)
+      earlyReplyAcks.remove(id)
+      earlyReplyDestroys.remove(id)
+      outgoing.addLast(encode(frame, Message.Response(id, 0u, data, error)))
     }
     flush()
   }

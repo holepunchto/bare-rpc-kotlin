@@ -239,6 +239,59 @@ class CancelTest {
   }
 
   @Test
+  fun `a body drained after a cancel sends no flow control`() = runTest {
+    val remote = Remote(this)
+    val sent = mutableListOf<ByteArray>()
+    val gate = CompletableDeferred<Unit>()
+    val drained = CompletableDeferred<Unit>()
+    val rpc =
+      Rpc(
+        TestTransport(remote.data, { sent += it }),
+        onRequest = { incoming ->
+          backgroundScope.launch {
+            runCatching { incoming.body!!.collect { gate.await() } }
+            drained.complete(Unit)
+          }
+          awaitCancellation()
+        },
+        scope = backgroundScope,
+      )
+    remote.send(request(5u, STREAM_OPEN))
+    remote.send(Message.Stream(5u, STREAM_REQUEST or STREAM_DATA, ByteArray(1), null))
+    remote.send(Message.Stream(5u, STREAM_REQUEST or STREAM_DATA, ByteArray(16 * 1024), null))
+    assertEquals(
+      Message.Stream(5u, STREAM_REQUEST or STREAM_PAUSE, null, null),
+      sentMessages(sent).last(),
+    )
+    val before = sent.size
+    remote.send(Message.Cancel(5u, gaveUp))
+    gate.complete(Unit)
+    drained.await()
+    assertEquals(before, sent.size)
+    assertEquals(0, rpc.tracked())
+  }
+
+  @Test
+  fun `frames for a request the peer cancelled are ignored`() = runTest {
+    val remote = Remote(this)
+    val sent = mutableListOf<ByteArray>()
+    val rpc =
+      Rpc(
+        TestTransport(remote.data, { sent += it }),
+        onRequest = { awaitCancellation() },
+        scope = backgroundScope,
+      )
+    remote.send(request(5u, STREAM_OPEN))
+    remote.send(Message.Cancel(5u, gaveUp))
+    remote.send(Message.Stream(5u, STREAM_REQUEST or STREAM_DATA, ByteArray(1), null))
+    remote.send(Message.Stream(5u, STREAM_REQUEST or STREAM_END, null, null))
+    remote.send(Message.Stream(5u, STREAM_RESPONSE or STREAM_OPEN, null, null))
+    assertEquals(emptyList(), sent)
+    assertEquals(0, rpc.tracked())
+    rpc.assertOpen()
+  }
+
+  @Test
   fun `a cancel for a request that is not in progress is ignored`() = runTest {
     val remote = Remote(this)
     val sent = mutableListOf<ByteArray>()
