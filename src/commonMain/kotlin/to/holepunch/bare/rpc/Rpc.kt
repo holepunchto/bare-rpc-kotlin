@@ -51,7 +51,7 @@ import to.holepunch.compactEncoding.encode
  * Each handler runs in a child of the connection's job, so a slow handler holds back no other
  * frame, and a handler may itself make requests to the peer.
  *
- * Cancelling a call before its request has finished cancels the request: the peer is told to stop
+ * Cancelling a call before its answer has arrived cancels the request: the peer is told to stop
  * handling it, with the code `TIMEOUT` if the call timed out, as in `withTimeout`, and `CANCELLED`
  * otherwise. When the peer cancels a request, its handler is cancelled with a
  * [RequestCancelledException] that carries the peer's code, the bodies of the request and its reply
@@ -190,12 +190,12 @@ public class Rpc(
    * stream, and emits the reply while [body] is sent: each chunk of a streamed reply, or a single
    * reply as one chunk unless it is empty. Once accepted, [body] is streamed to its end in [scope]
    * even after the reply ends, unless the peer stops reading it, the connection closes, or the
-   * collection is cancelled or fails, which closes the stream. A single reply before the peer
-   * accepts the stream closes it, with the reply's error if it is one. If [body] throws, the stream
-   * is closed with the error, and the flow throws it if the reply has yet to end. Each collection
-   * sends a new request. Cancelling a collection before the reply ends, or stopping it early as
-   * `first()` does, cancels the request. A collector that fails instead tells a peer that has
-   * started streaming to stop, with the error the collector failed with.
+   * collection is cancelled or fails. A collection that fails closes the stream of [body]. A single
+   * reply before the peer accepts the stream closes it, with the reply's error if it is one. If
+   * [body] throws, the stream is closed with the error, and the flow throws it if the reply has yet
+   * to end. Each collection sends a new request. Cancelling a collection before the reply ends, or
+   * stopping it early as `first()` does, cancels the request. A collector that fails instead tells
+   * a peer that has started streaming to stop, with the error the collector failed with.
    *
    * @throws RemoteException if the peer replies or closes the stream with an error.
    * @throws Throwable the failure that closed the connection, a [ConnectionClosedException] after
@@ -358,15 +358,17 @@ public class Rpc(
   private suspend fun cancelRequest(id: ULong, cause: CancellationException) =
     withContext(NonCancellable) {
       val error = if (cause is TimeoutCancellationException) TIMED_OUT else CANCELLED
-      val inbox = state.withLock {
+      state.withLock {
         if (failure != null || (id !in pending && id !in replyIn)) return@withContext
         pending.remove(id)
         requestOut.remove(id)
-        outgoing.addLast(encode(frame, Message.Cancel(id, error)))
         replyIn.remove(id)
+        outgoing.addLast(encode(frame, Message.Cancel(id, error)))
       }
-      inbox?.chunks?.close()
-      flush()
+      // A failed write has failed the connection, and the caller throws its own cancellation.
+      try {
+        flush()
+      } catch (e: Throwable) {}
     }
 
   // Runs in the connection's scope, as the body streams on to its end after the reply comes.
@@ -701,12 +703,12 @@ public class Rpc(
     if (inbox == null) {
       val incoming = IncomingRequest(request.command, request.data!!, null)
       launchWithCleanup({}, CoroutineStart.UNDISPATCHED, handling) {
-        reply(request.id) { handler.handle(incoming) }
+        reply(request.id, handling) { handler.handle(incoming) }
       }
     } else {
       val incoming = IncomingRequest(request.command, ByteArray(0), requestBody(request.id, inbox))
       launchWithCleanup({ stopReading(request.id, requestIn) }, context = handling) {
-        reply(request.id) { handler.handle(incoming) }?.join()
+        reply(request.id, handling) { handler.handle(incoming) }?.join()
       }
     }
     handling.complete()
@@ -736,21 +738,23 @@ public class Rpc(
 
   // A request stays live until its reply is sent, whole or streamed. One whose handler never
   // replies is cancelled only when the connection fails, which forgets it.
-  private suspend fun reply(id: ULong, handler: suspend () -> Reply): Job? {
+  // A request is known by its job as well as its id, since the peer can reuse the id of one it has
+  // cancelled.
+  private suspend fun reply(id: ULong, request: Job, handler: suspend () -> Reply): Job? {
     val reply =
       try {
         handler()
       } catch (e: Throwable) {
         if (e is CancellationException) currentCoroutineContext().ensureActive()
-        respond(id, error = remoteError(e))
+        respond(id, request, error = remoteError(e))
         return null
       }
     return when (reply) {
       is Reply.Data -> {
-        respond(id, data = reply.data)
+        respond(id, request, data = reply.data)
         null
       }
-      is Reply.Stream -> streamReply(id, reply.body)
+      is Reply.Stream -> streamReply(id, request, reply.body)
     }
   }
 
@@ -766,14 +770,15 @@ public class Rpc(
       }
     }
 
-  private suspend fun streamReply(id: ULong, body: Flow<ByteArray>): Job? {
+  private suspend fun streamReply(id: ULong, request: Job, body: Flow<ByteArray>): Job? {
     val accepted = CompletableDeferred<Boolean>()
     val paused = MutableStateFlow(false)
+    val out = OutgoingBody(accepted, paused)
     val sender =
       launchWithCleanup({
         state.withLock {
-          replyOut.remove(id)
-          liveRequests.remove(id)
+          if (replyOut[id] === out) replyOut.remove(id)
+          if (liveRequests[id] === request) liveRequests.remove(id)
         }
       }) {
         accepted.await()
@@ -788,14 +793,13 @@ public class Rpc(
           // A sender launched on a cancelled scope never runs, so the reply fails instead.
           if (sender.isCancelled) return@withLock false
           // The peer has cancelled the request, so nothing is streamed.
-          if (id !in liveRequests) return null
+          if (liveRequests[id] !== request) return null
           // Queued before the sender can start, so the reply goes out before its body ends.
           outgoing.addLast(encode(frame, Message.Response(id, STREAM_OPEN, null, null)))
           if (!earlyReplyDestroys.remove(id)) {
-            val early = earlyReplyAcks.remove(id)
-            if (early) accepted.complete(true)
-            replyOut[id] =
-              OutgoingBody(accepted.takeUnless { early }, paused).also { it.sender = sender }
+            if (earlyReplyAcks.remove(id)) out.takeAccepted()?.complete(true)
+            out.sender = sender
+            replyOut[id] = out
             kept = true
           }
           true
@@ -804,7 +808,7 @@ public class Rpc(
         if (!kept) sender.cancel()
       }
     if (!running) {
-      respond(id, error = remoteError(ConnectionClosedException()))
+      respond(id, request, error = remoteError(ConnectionClosedException()))
       return null
     }
     flush()
@@ -899,12 +903,13 @@ public class Rpc(
 
   private suspend fun respond(
     id: ULong,
+    request: Job,
     data: ByteArray? = null,
     error: RemoteError? = null,
   ) {
     state.withLock {
       // A request the peer has cancelled is no longer live, so its answer is dropped.
-      if (failure != null || id !in liveRequests) return
+      if (failure != null || liveRequests[id] !== request) return
       liveRequests.remove(id)
       earlyReplyAcks.remove(id)
       earlyReplyDestroys.remove(id)

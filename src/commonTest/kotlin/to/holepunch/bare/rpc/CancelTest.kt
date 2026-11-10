@@ -7,6 +7,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.TimeoutCancellationException
@@ -58,6 +59,66 @@ class CancelTest {
     val messages = sentMessages(sent)
     assertEquals(3, messages.size)
     assertEquals("TIMEOUT", assertIs<Message.Cancel>(messages.last()).error.code)
+    assertEquals(0, rpc.tracked())
+  }
+
+  private fun failingCancels(remote: Remote, scope: CoroutineScope) =
+    Rpc(
+      TestTransport(remote.data) {
+        if (Messages.decode(it).message is Message.Cancel)
+          throw IllegalStateException("write failed")
+      },
+      scope = scope,
+    )
+
+  @Test
+  fun `a call that times out throws its timeout when the cancel fails to write`() = runTest {
+    val rpc = failingCancels(Remote(this), backgroundScope)
+    assertFailsWith<TimeoutCancellationException> {
+      withTimeout(100) { rpc.request(7u, ByteArray(0)) }
+    }
+    val flowRpc = failingCancels(Remote(this), backgroundScope)
+    assertFailsWith<TimeoutCancellationException> {
+      withTimeout(100) { flowRpc.requestFlow(7u, ByteArray(0)).collect() }
+    }
+  }
+
+  @Test
+  fun `a cancelled call ends cancelled when the cancel fails to write`() = runTest {
+    val rpc = failingCancels(Remote(this), backgroundScope)
+    val plain = async { rpc.request(7u, ByteArray(0)) }
+    val flowRpc = failingCancels(Remote(this), backgroundScope)
+    val flow = async { flowRpc.requestFlow(7u, ByteArray(0)).collect() }
+    runCurrent()
+    plain.cancel()
+    flow.cancel()
+    assertFailsWith<CancellationException> { plain.await() }
+    assertFailsWith<CancellationException> { flow.await() }
+  }
+
+  @Test
+  fun `cancelling a reply flow while its body streams sends no close of the body`() = runTest {
+    val remote = Remote(this)
+    val sent = mutableListOf<ByteArray>()
+    val rpc = Rpc(TestTransport(remote.data, { sent += it }), scope = backgroundScope)
+    val body = flow {
+      emit("hi".encodeToByteArray())
+      awaitCancellation()
+    }
+    val reply = async { rpc.requestFlow(7u, body).collect() }
+    runCurrent()
+    remote.send(Message.Stream(1u, STREAM_REQUEST or STREAM_OPEN, null, null))
+    reply.cancel()
+    runCurrent()
+    assertEquals(
+      listOf(
+        Message.Request(1u, 7u, STREAM_OPEN, null),
+        Message.Stream(1u, STREAM_RESPONSE or STREAM_OPEN, null, null),
+        Message.Stream(1u, STREAM_REQUEST or STREAM_DATA, "hi".encodeToByteArray(), null),
+        Message.Cancel(1u, RemoteError("Request was cancelled", "CANCELLED", 0)),
+      ),
+      sentMessages(sent),
+    )
     assertEquals(0, rpc.tracked())
   }
 
@@ -269,6 +330,82 @@ class CancelTest {
     drained.await()
     assertEquals(before, sent.size)
     assertEquals(0, rpc.tracked())
+  }
+
+  @Test
+  fun `a request that reuses the id of a cancelled one keeps its answer`() = runTest {
+    val remote = Remote(this)
+    val sent = mutableListOf<ByteArray>()
+    val gate = CompletableDeferred<Unit>()
+    val rpc =
+      Rpc(
+        TestTransport(remote.data, { sent += it }),
+        onRequest = {
+          when (it.command) {
+            7uL -> Reply.Stream(flow { awaitCancellation() })
+            8uL -> {
+              gate.await()
+              Reply.Data("data".encodeToByteArray())
+            }
+            else -> Reply.Stream(flow { emit("hi".encodeToByteArray()) })
+          }
+        },
+        scope = backgroundScope,
+      )
+    remote.send(request(5u))
+    remote.send(request(6u))
+    val before = sent.size
+    // In one chunk, so the new requests arrive before the cancelled senders clean up.
+    remote.send(
+      listOf(
+          Message.Cancel(5u, gaveUp),
+          Message.Request(5u, 8u, 0u, ByteArray(0)),
+          Message.Cancel(6u, gaveUp),
+          Message.Request(6u, 9u, 0u, ByteArray(0)),
+        )
+        .map { encode(frame, it) }
+        .reduce { a, b -> a + b }
+    )
+    remote.send(Message.Stream(6u, STREAM_RESPONSE or STREAM_OPEN, null, null))
+    gate.complete(Unit)
+    runCurrent()
+    assertEquals(
+      listOf<Message>(
+        Message.Response(6u, STREAM_OPEN, null, null),
+        Message.Stream(6u, STREAM_RESPONSE or STREAM_DATA, "hi".encodeToByteArray(), null),
+        Message.Stream(6u, STREAM_RESPONSE or STREAM_END, null, null),
+        Message.Response(5u, 0u, "data".encodeToByteArray(), null),
+      ),
+      sentMessages(sent.drop(before)),
+    )
+    assertEquals(0, rpc.tracked())
+  }
+
+  @Test
+  fun `the answer of a cancelled handler skips a request that reuses its id`() = runTest {
+    val remote = Remote(this)
+    val sent = mutableListOf<ByteArray>()
+    val gate = CompletableDeferred<Unit>()
+    val rpc =
+      Rpc(
+        TestTransport(remote.data, { sent += it }),
+        onRequest = {
+          if (it.command == 8uL) awaitCancellation()
+          withContext(NonCancellable) { gate.await() }
+          if (it.data.isEmpty()) Reply.Data(ByteArray(0)) else Reply.Stream(flow {})
+        },
+        scope = backgroundScope,
+      )
+    remote.send(request(5u))
+    remote.send(Message.Request(6u, 7u, 0u, ByteArray(1)))
+    remote.send(Message.Cancel(5u, gaveUp))
+    remote.send(Message.Cancel(6u, gaveUp))
+    remote.send(Message.Request(5u, 8u, 0u, ByteArray(0)))
+    remote.send(Message.Request(6u, 8u, 0u, ByteArray(0)))
+    gate.complete(Unit)
+    runCurrent()
+    assertEquals(emptyList(), sent)
+    assertEquals(2, rpc.tracked())
   }
 
   @Test
