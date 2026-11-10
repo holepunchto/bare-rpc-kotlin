@@ -31,9 +31,9 @@ class RequestStreamTest {
   // stream id 1, request close error: "boom", "E_BOOM", errno 1
   private val closeError = "120000000301fd820104626f6f6d06455f424f4f4d02"
   private val destroy = "050000000301fd4001" // stream id 1, request destroy
+  // cancel id 1, CANCELLED
   private val cancel =
-    "2300000004011552657175657374207761732063616e63656c6c65640943414e43454c4c454400" // cancel id 1,
-  // CANCELLED
+    "2300000004011552657175657374207761732063616e63656c6c65640943414e43454c4c454400"
   // stream id 1, request destroy error: "boom", "E_BOOM", errno 1
   private val destroyError = "120000000301fdc00104626f6f6d06455f424f4f4d02"
   private val ok = "0700000002010000026f6b" // response id 1, "ok"
@@ -311,6 +311,10 @@ class RequestStreamTest {
     reply.cancel()
     runCurrent()
     assertEquals(listOf(open, data, cancel), sent)
+    remote.send((pause + ok).hexToByteArray())
+    assertEquals(listOf(open, data, cancel), sent)
+    assertEquals(0, rpc.tracked())
+    rpc.assertOpen()
   }
 
   @Test

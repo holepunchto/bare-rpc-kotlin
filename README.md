@@ -140,9 +140,9 @@ The session ends with a `ConnectionClosedException` when you call `close()`, `sc
 
 Pending requests and streams then throw the exception, and so do later requests. Bodies that are still being sent are cancelled, with the exception as the cause. Events sent after the end are dropped.
 
-The session then stops collecting `data`, cancels running handlers, and closes the transport. If it ended with a `ConnectionClosedException`, it first writes the frames already queued. Otherwise it drops them.
+The session then stops collecting `data`, cancels running request and event handlers, and closes the transport. If it ended with a `ConnectionClosedException`, it first writes the frames already queued. Otherwise it drops them.
 
-`close()` waits for the transport to close, unless you call it from a handler or a body. `wait()` waits for the session to end and the transport to close. It returns if the session ended with a `ConnectionClosedException`, and throws the exception otherwise:
+`close()` waits for the transport to close, unless you call it from a handler or a body. A handler that calls `close()` itself is cancelled once `close()` returns, at its next suspension point. `wait()` waits for the session to end and the transport to close. It returns if the session ended with a `ConnectionClosedException`, and throws the exception otherwise:
 
 ```kotlin
 try {

@@ -17,9 +17,9 @@ class IncomingRequestTest {
   private val hi = "0700000001050700026869" // request id 5, command 7, "hi"
   private val first = "0700000001010700026869" // request id 1, command 7, "hi"
   private val ok = "0700000002050000026f6b" // response id 5, "ok"
+  // cancel id 1, CANCELLED
   private val cancel =
-    "2300000004011552657175657374207761732063616e63656c6c65640943414e43454c4c454400" // cancel id 1,
-  // CANCELLED
+    "2300000004011552657175657374207761732063616e63656c6c65640943414e43454c4c454400"
   private val boom = "110000000205010004626f6f6d06455f424f4f4d02" // error id 5: "boom", "E_BOOM", 1
   private val secret = "0d00000002050100067365637265740000" // error id 5: "secret", "", 0
   private val noDirection = "03000000030104" // stream id 1, pause, neither request nor response

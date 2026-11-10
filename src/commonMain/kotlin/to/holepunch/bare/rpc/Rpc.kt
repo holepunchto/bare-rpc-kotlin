@@ -1,5 +1,7 @@
 package to.holepunch.bare.rpc
 
+import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.EmptyCoroutineContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -22,6 +24,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.onStart
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -117,8 +120,8 @@ public class Rpc(
   private val replyOut = mutableMapOf<ULong, OutgoingBody>()
   private val earlyReplyAcks = mutableSetOf<ULong>()
   private val earlyReplyDestroys = mutableSetOf<ULong>()
-  private val liveRequests = mutableSetOf<ULong>()
-  private val handlers = mutableMapOf<ULong, Job>()
+  // The job of each request in progress, which runs its handler.
+  private val liveRequests = mutableMapOf<ULong, Job>()
   private var lastRequestId = 0uL
   private val outgoing = ArrayDeque<ByteArray>()
   private var failure: Throwable? = null
@@ -233,8 +236,8 @@ public class Rpc(
 
   // The number of entries kept per request or stream, so tests can see that none are left behind.
   internal suspend fun tracked(): Int = state.withLock {
-    listOf(pending, requestIn, replyIn, requestOut, replyOut, handlers).sumOf { it.size } +
-      listOf(earlyReplyAcks, earlyReplyDestroys, liveRequests).sumOf { it.size }
+    listOf(pending, requestIn, replyIn, requestOut, replyOut, liveRequests).sumOf { it.size } +
+      listOf(earlyReplyAcks, earlyReplyDestroys).sumOf { it.size }
   }
 
   private suspend fun read(data: Flow<ByteArray>) {
@@ -285,7 +288,8 @@ public class Rpc(
       }
       return reply.await()
     } catch (e: CancellationException) {
-      cancelRequest(id, e)
+      // A body can throw a cancellation of its own, which fails the reply but not the caller.
+      if (!currentCoroutineContext().isActive) cancelRequest(id, e)
       sender?.cancel()
       throw e
     } finally {
@@ -333,7 +337,10 @@ public class Rpc(
         }
       }
     } catch (e: Throwable) {
-      if (e is CancellationException) cancelRequest(id, e)
+      // A body can throw a cancellation of its own, which fails the reply but not the collector.
+      if (e is CancellationException && (e === failed || !currentCoroutineContext().isActive)) {
+        cancelRequest(id, e)
+      }
       if (e is CancellationException || e === failed) sender?.cancel()
       throw e
     } finally {
@@ -347,16 +354,14 @@ public class Rpc(
   private suspend fun cancelRequest(id: ULong, cause: CancellationException) =
     withContext(NonCancellable) {
       val error = if (cause is TimeoutCancellationException) TIMED_OUT else CANCELLED
-      val (inbox, out) =
-        state.withLock {
-          if (failure != null || (id !in pending && id !in replyIn)) return@withContext
-          pending.remove(id)
-          outgoing.addLast(encode(frame, Message.Cancel(id, error)))
-          replyIn.remove(id) to requestOut.remove(id)
-        }
+      val inbox = state.withLock {
+        if (failure != null || (id !in pending && id !in replyIn)) return@withContext
+        pending.remove(id)
+        requestOut.remove(id)
+        outgoing.addLast(encode(frame, Message.Cancel(id, error)))
+        replyIn.remove(id)
+      }
       inbox?.chunks?.close()
-      out?.takeAccepted()?.complete(false)
-      out?.takeSender()?.cancel()
       flush()
     }
 
@@ -389,18 +394,21 @@ public class Rpc(
     paused: MutableStateFlow<Boolean>,
     onEnd: () -> Unit = {},
   ): Throwable? {
+    // A cancel can drop the body between the sender's last check for cancellation and its frame.
+    val outs = if (mask == STREAM_REQUEST) requestOut else replyOut
     var error: Throwable? = null
     body
       .catch { error = it }
       .collect {
         paused.awaitResume()
-        sendMessage { Message.Stream(id, mask or STREAM_DATA, it, null) }
+        sendMessage { Message.Stream(id, mask or STREAM_DATA, it, null).takeIf { id in outs } }
       }
     val failed = error
     paused.awaitResume()
     sendMessage {
       onEnd()
-      if (failed == null) Message.Stream(id, mask or STREAM_END, null, null)
+      if (id !in outs) null
+      else if (failed == null) Message.Stream(id, mask or STREAM_END, null, null)
       else Message.Stream(id, mask or STREAM_CLOSE or STREAM_ERROR, null, remoteError(failed))
     }
     return failed
@@ -410,10 +418,10 @@ public class Rpc(
     first { !it }
   }
 
-  private suspend fun sendMessage(message: () -> Message) {
+  private suspend fun sendMessage(message: () -> Message?) {
     state.withLock {
       failure?.let { throw it }
-      outgoing.addLast(encode(frame, message()))
+      outgoing.addLast(encode(frame, message() ?: return))
     }
     sending.withLock { drain() }
     flush()
@@ -465,8 +473,8 @@ public class Rpc(
       bodies = (requestIn.values + replyIn.values).map { it.chunks }
       pauses = outs.map { it.paused }
       senders = outs.mapNotNull { it.sender }
-      listOf(pending, requestIn, replyIn, requestOut, replyOut, handlers).forEach { it.clear() }
-      listOf(earlyReplyAcks, earlyReplyDestroys, liveRequests).forEach { it.clear() }
+      listOf(pending, requestIn, replyIn, requestOut, replyOut, liveRequests).forEach { it.clear() }
+      listOf(earlyReplyAcks, earlyReplyDestroys).forEach { it.clear() }
     }
     waiting.forEach { it.completeExceptionally(cause) }
     pauses.forEach { it.value = false }
@@ -564,15 +572,14 @@ public class Rpc(
     val exception = RequestCancelledException(error.message, error.code, error.errno)
     val (job, inbox, out) =
       state.withLock {
-        val live = liveRequests.remove(message.id)
+        val job = liveRequests.remove(message.id)
         val inbox = requestIn.remove(message.id)
-        if (!live && inbox == null) return
+        if (job == null && inbox == null) return
         earlyReplyAcks.remove(message.id)
         earlyReplyDestroys.remove(message.id)
-        Triple(handlers.remove(message.id), inbox, replyOut.remove(message.id))
+        Triple(job, inbox, replyOut.remove(message.id))
       }
     inbox?.chunks?.close(remoteException(error))
-    out?.takeAccepted()?.complete(false)
     out?.takeSender()?.cancel(exception)
     job?.cancel(exception)
   }
@@ -677,8 +684,9 @@ public class Rpc(
 
   private suspend fun answer(request: Message.Request) {
     val inbox = if (request.stream != 0uL) Inbox(STREAM_REQUEST, maxBufferedBytes) else null
-    state.withLock {
-      if (!liveRequests.add(request.id)) {
+    // Kept with the request before the handler starts, so that a cancel always finds it.
+    val handling = state.withLock {
+      if (request.id in liveRequests) {
         throw MalformedFrameException("request ${request.id} is still in progress")
       }
       lastRequestId = maxOf(lastRequestId, request.id)
@@ -686,12 +694,14 @@ public class Rpc(
         failure?.let { throw it }
         requestIn[request.id] = inbox
       }
+      Job(job).also { liveRequests[request.id] = it }
     }
     if (inbox == null) {
       val incoming = IncomingRequest(request.command, request.data!!, null)
-      launchWithCleanup({}, CoroutineStart.UNDISPATCHED) {
-        reply(request.id) { handling(request.id) { handler.handle(incoming) } }
+      launchWithCleanup({}, CoroutineStart.UNDISPATCHED, handling) {
+        reply(request.id) { handler.handle(incoming) }
       }
+      handling.complete()
       return
     }
     val chunks =
@@ -713,14 +723,11 @@ public class Rpc(
       }
       emitAll(chunks)
     }
-    launchWithCleanup({ stopReading(request.id, requestIn) }) {
-      reply(request.id) {
-          handling(request.id) {
-            handler.handle(IncomingRequest(request.command, ByteArray(0), body))
-          }
-        }
+    launchWithCleanup({ stopReading(request.id, requestIn) }, context = handling) {
+      reply(request.id) { handler.handle(IncomingRequest(request.command, ByteArray(0), body)) }
         ?.join()
     }
+    handling.complete()
   }
 
   // A request stays live until its reply is sent, whole or streamed. One whose handler never
@@ -740,19 +747,6 @@ public class Rpc(
         null
       }
       is Reply.Stream -> streamReply(id, reply.body)
-    }
-  }
-
-  // Keeps the job of a running handler, so that a cancel of the peer can cancel it.
-  private suspend fun handling(id: ULong, handle: suspend () -> Reply): Reply {
-    val job = currentCoroutineContext().job
-    state.withLock { handlers[id] = job }
-    try {
-      return handle()
-    } finally {
-      withContext(NonCancellable) {
-        state.withLock { if (handlers[id] === job) handlers.remove(id) }
-      }
     }
   }
 
@@ -791,8 +785,10 @@ public class Rpc(
       // The peer has cancelled the request, so nothing is streamed.
       if (id !in liveRequests) {
         sender.cancel()
-        return@withLock false
+        return null
       }
+      // Queued before the sender can start, so the reply goes out before its body ends.
+      outgoing.addLast(encode(frame, Message.Response(id, STREAM_OPEN, null, null)))
       if (earlyReplyDestroys.remove(id)) {
         sender.cancel()
       } else {
@@ -807,7 +803,7 @@ public class Rpc(
       respond(id, 0u, error = remoteError(ConnectionClosedException()))
       return null
     }
-    respond(id, STREAM_OPEN)
+    flush()
     return sender
   }
 
@@ -816,9 +812,10 @@ public class Rpc(
     cleanup: suspend () -> Unit,
     // Either start runs even on a cancelled scope, so cleanup always runs.
     start: CoroutineStart = CoroutineStart.ATOMIC,
+    context: CoroutineContext = EmptyCoroutineContext,
     block: suspend () -> Unit,
   ) =
-    tasks.launch(start = start) {
+    tasks.launch(context, start) {
       try {
         currentCoroutineContext().ensureActive()
         block()
