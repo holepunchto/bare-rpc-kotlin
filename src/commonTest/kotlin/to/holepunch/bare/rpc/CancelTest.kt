@@ -5,14 +5,18 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -58,6 +62,19 @@ class CancelTest {
   }
 
   @Test
+  fun `stopping a reply flow at its single reply sends no cancel`() = runTest {
+    val remote = Remote(this)
+    val sent = mutableListOf<ByteArray>()
+    val rpc = Rpc(TestTransport(remote.data, { sent += it }), scope = backgroundScope)
+    val reply = async { rpc.requestFlow(7u, ByteArray(0)).first() }
+    runCurrent()
+    remote.send(Message.Response(1u, 0u, "hi".encodeToByteArray(), null))
+    assertEquals("hi", reply.await().decodeToString())
+    assertEquals(emptyList(), sentMessages(sent).filterIsInstance<Message.Cancel>())
+    assertEquals(0, rpc.tracked())
+  }
+
+  @Test
   fun `a request body that times out on its own does not cancel the request`() = runTest {
     val remote = Remote(this)
     val sent = mutableListOf<ByteArray>()
@@ -71,6 +88,25 @@ class CancelTest {
     assertIs<TimeoutCancellationException>(reply.await())
     assertIs<TimeoutCancellationException>(flowReply.await())
     assertEquals(emptyList(), sentMessages(sent).filterIsInstance<Message.Cancel>())
+  }
+
+  @Test
+  fun `a call whose coroutine is already cancelled sends nothing`() = runTest {
+    val remote = Remote(this)
+    val sent = mutableListOf<ByteArray>()
+    val rpc = Rpc(TestTransport(remote.data, { sent += it }), scope = backgroundScope)
+    val plain = async {
+      currentCoroutineContext().job.cancel()
+      rpc.request(7u, ByteArray(0))
+    }
+    val flow = async {
+      currentCoroutineContext().job.cancel()
+      rpc.requestFlow(7u, ByteArray(0)).first()
+    }
+    assertFailsWith<CancellationException> { plain.await() }
+    assertFailsWith<CancellationException> { flow.await() }
+    assertEquals(emptyList(), sentMessages(sent))
+    assertEquals(0, rpc.tracked())
   }
 
   @Test
@@ -104,22 +140,35 @@ class CancelTest {
   fun `a cancel read with its streamed request stops the handler`() = runTest {
     val remote = Remote(this)
     val sent = mutableListOf<ByteArray>()
-    var running = false
+    var started = false
     val rpc =
       Rpc(
         TestTransport(remote.data, { sent += it }),
         onRequest = {
-          running = true
-          try {
-            awaitCancellation()
-          } finally {
-            running = false
-          }
+          started = true
+          awaitCancellation()
         },
         scope = backgroundScope,
       )
     remote.send(encode(frame, request(5u, STREAM_OPEN)) + encode(frame, Message.Cancel(5u, gaveUp)))
-    assertFalse(running)
+    assertFalse(started)
+    assertEquals(emptyList(), sent)
+    assertEquals(0, rpc.tracked())
+  }
+
+  @Test
+  fun `a cancel after an early ack of the reply forgets the ack`() = runTest {
+    val remote = Remote(this)
+    val sent = mutableListOf<ByteArray>()
+    val rpc =
+      Rpc(
+        TestTransport(remote.data, { sent += it }),
+        onRequest = { awaitCancellation() },
+        scope = backgroundScope,
+      )
+    remote.send(request(5u))
+    remote.send(Message.Stream(5u, STREAM_RESPONSE or STREAM_OPEN, null, null))
+    remote.send(Message.Cancel(5u, gaveUp))
     assertEquals(emptyList(), sent)
     assertEquals(0, rpc.tracked())
   }

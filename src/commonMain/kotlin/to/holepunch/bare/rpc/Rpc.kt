@@ -271,6 +271,9 @@ public class Rpc(
     data: ByteArray?,
     body: Flow<ByteArray>?,
   ): ByteArray {
+    // Taking a free lock does not check for cancellation, so a cancelled call would send its
+    // request only to cancel it at once.
+    currentCoroutineContext().ensureActive()
     val reply = CompletableDeferred<ByteArray>()
     val accepted = CompletableDeferred<Boolean>()
     val paused = MutableStateFlow(false)
@@ -307,6 +310,7 @@ public class Rpc(
     data: ByteArray?,
     body: Flow<ByteArray>?,
   ): Flow<ByteArray> = flow {
+    currentCoroutineContext().ensureActive()
     val inbox = Inbox(STREAM_RESPONSE, maxBufferedBytes)
     val accepted = CompletableDeferred<Boolean>()
     val paused = MutableStateFlow(false)
@@ -690,10 +694,8 @@ public class Rpc(
         throw MalformedFrameException("request ${request.id} is still in progress")
       }
       lastRequestId = maxOf(lastRequestId, request.id)
-      if (inbox != null) {
-        failure?.let { throw it }
-        requestIn[request.id] = inbox
-      }
+      failure?.let { throw it }
+      if (inbox != null) requestIn[request.id] = inbox
       Job(job).also { liveRequests[request.id] = it }
     }
     if (inbox == null) {
@@ -701,33 +703,35 @@ public class Rpc(
       launchWithCleanup({}, CoroutineStart.UNDISPATCHED, handling) {
         reply(request.id) { handler.handle(incoming) }
       }
-      handling.complete()
-      return
+    } else {
+      val incoming = IncomingRequest(request.command, ByteArray(0), requestBody(request.id, inbox))
+      launchWithCleanup({ stopReading(request.id, requestIn) }, context = handling) {
+        reply(request.id) { handler.handle(incoming) }?.join()
+      }
     }
+    handling.complete()
+  }
+
+  private fun requestBody(id: ULong, inbox: Inbox): Flow<ByteArray> {
     val chunks =
       inbox.chunks
         .consumeAsFlow()
         .onStart {
-          queueSignals(request.id) {
-            if (requestIn[request.id] !== inbox) return@queueSignals emptyList()
+          queueSignals(id) {
+            if (requestIn[id] !== inbox) return@queueSignals emptyList()
             inbox.isOpened = true
             listOf(STREAM_REQUEST or STREAM_OPEN)
           }
         }
-        .onEach { take(request.id, inbox, it) }
-        .onCompletion { stopReading(request.id, requestIn, it) }
-    val body = flow {
+        .onEach { take(id, inbox, it) }
+        .onCompletion { stopReading(id, requestIn, it) }
+    return flow {
       state.withLock {
         if (inbox.isCollected) throw AlreadyReceivedException()
         inbox.isCollected = true
       }
       emitAll(chunks)
     }
-    launchWithCleanup({ stopReading(request.id, requestIn) }, context = handling) {
-      reply(request.id) { handler.handle(IncomingRequest(request.command, ByteArray(0), body)) }
-        ?.join()
-    }
-    handling.complete()
   }
 
   // A request stays live until its reply is sent, whole or streamed. One whose handler never
@@ -775,30 +779,30 @@ public class Rpc(
         accepted.await()
         sendBody(id, STREAM_RESPONSE, body, paused)
       }
-    val running = state.withLock {
-      failure?.let {
-        sender.cancel()
-        throw it
+    // Taking the lock can throw a cancellation, so a sender is cancelled unless it was kept.
+    var kept = false
+    val running =
+      try {
+        state.withLock {
+          failure?.let { throw it }
+          // A sender launched on a cancelled scope never runs, so the reply fails instead.
+          if (sender.isCancelled) return@withLock false
+          // The peer has cancelled the request, so nothing is streamed.
+          if (id !in liveRequests) return null
+          // Queued before the sender can start, so the reply goes out before its body ends.
+          outgoing.addLast(encode(frame, Message.Response(id, STREAM_OPEN, null, null)))
+          if (!earlyReplyDestroys.remove(id)) {
+            val early = earlyReplyAcks.remove(id)
+            if (early) accepted.complete(true)
+            replyOut[id] =
+              OutgoingBody(accepted.takeUnless { early }, paused).also { it.sender = sender }
+            kept = true
+          }
+          true
+        }
+      } finally {
+        if (!kept) sender.cancel()
       }
-      // A sender launched on a cancelled scope never runs, so the reply fails instead.
-      if (sender.isCancelled) return@withLock false
-      // The peer has cancelled the request, so nothing is streamed.
-      if (id !in liveRequests) {
-        sender.cancel()
-        return null
-      }
-      // Queued before the sender can start, so the reply goes out before its body ends.
-      outgoing.addLast(encode(frame, Message.Response(id, STREAM_OPEN, null, null)))
-      if (earlyReplyDestroys.remove(id)) {
-        sender.cancel()
-      } else {
-        val early = earlyReplyAcks.remove(id)
-        if (early) accepted.complete(true)
-        replyOut[id] =
-          OutgoingBody(accepted.takeUnless { early }, paused).also { it.sender = sender }
-      }
-      true
-    }
     if (!running) {
       respond(id, 0u, error = remoteError(ConnectionClosedException()))
       return null
