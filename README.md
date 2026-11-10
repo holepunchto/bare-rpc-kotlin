@@ -108,11 +108,13 @@ The body of a request can be collected once. A second collection throws an `Alre
 
 ## Cancellation
 
-Cancelling the coroutine of a call before its request has finished cancels the request. This covers `request()`, and the collection of a flow from `requestFlow()`, including one that stops early as `first()` does. The peer is told to stop handling the request, and its bodies are dropped on both ends. If the call timed out in `withTimeout`, the peer gets the code `TIMEOUT`, and `CANCELLED` otherwise:
+Cancelling the coroutine of a call before its answer has arrived cancels the request. This covers `request()`, and the collection of a flow from `requestFlow()` until the reply ends, including one that stops early as `first()` does. The peer is told to stop handling the request, and its bodies are dropped on both ends. If the call timed out in `withTimeout`, the peer gets the code `TIMEOUT`, and `CANCELLED` otherwise:
 
 ```kotlin
 val reply = withTimeout(5.seconds) { rpc.request(1u, "ping".encodeToByteArray()) }
 ```
+
+Once the answer has arrived, cancelling does nothing, and a body that is still being sent keeps streaming to its end, as described under [Streaming requests and responses](#streaming-requests-and-responses). A call whose coroutine is already cancelled sends no request at all.
 
 On the answering side, a cancel of the peer cancels the coroutine of the handler with a `RequestCancelledException`. It is a `CancellationException` that carries the `message`, `code` and `errno` of the peer. The bodies of the request end as if the peer had destroyed them with that error: a collection of `request.body` throws a `RemoteException` with it, and a `Reply.Stream` stops. The answer of the handler is dropped:
 
@@ -126,6 +128,8 @@ router.onRequest(1u) { request ->
   }
 }
 ```
+
+When the session ends, the request and event handlers that are still running are cancelled too.
 
 Cancelling a request needs a peer that supports it. A peer without support fails the session with an `UnknownMessageException` when it receives a cancel.
 
